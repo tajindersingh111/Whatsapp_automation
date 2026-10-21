@@ -65,6 +65,7 @@
 <header>
   <h1>WA Agent Console</h1>
   <select id="tenantSelect" style="width:auto;min-width:180px"></select>
+  <button class="secondary" id="newBrand">+ New brand</button>
   <nav id="tabs">
     <button data-tab="setup">Setup</button>
     <button data-tab="training">Bot training</button>
@@ -124,28 +125,33 @@ function askToken() {
 }
 
 function newBrandForm() {
-  $("#view").innerHTML = `<div class="card" style="max-width:480px"><h2>New brand</h2>
-    <form id="nb"><label>Brand name</label><input id="nb_name" required minlength="2">
-    <p class="row"><button class="primary">Create</button><button type="button" class="secondary" id="nb_cancel">Cancel</button></p></form></div>`;
-  $("#nb_cancel").onclick = () => { $("#tenantSelect").value = tenantId || ""; render(); };
+  $("#view").innerHTML = `<div class="card" style="max-width:480px"><h2>${tenantId ? "New brand" : "Add your first brand"}</h2>
+    <p class="muted">One brand = one client business (its WhatsApp number, store, bot and inbox).</p>
+    <form id="nb"><label>Brand name</label><input id="nb_name" required minlength="2" placeholder="e.g. Jaipur Linen Co">
+    <p class="row"><button class="primary">Create</button>${tenantId ? `<button type="button" class="secondary" id="nb_cancel">Cancel</button>` : ""}</p></form></div>`;
+  if (tenantId) $("#nb_cancel").onclick = () => render();
+  $("#nb_name").focus();
   $("#nb").onsubmit = async (e) => {
     e.preventDefault();
-    const r = await api("/admin/tenants", { method: "POST", body: { name: $("#nb_name").value.trim() } });
-    tenantId = r.id; store.set("wa_tenant", tenantId); tab = "setup"; await loadTenants(); render();
+    try {
+      const r = await api("/admin/tenants", { method: "POST", body: { name: $("#nb_name").value.trim() } });
+      tenantId = r.id; store.set("wa_tenant", tenantId); tab = "setup"; store.set("wa_tab", tab); await loadTenants(); render();
+    } catch (err) { toast(err.message, true); }
   };
 }
 
 async function loadTenants() {
   const tenants = await api("/admin/tenants");
   const sel = $("#tenantSelect");
-  sel.innerHTML = tenants.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("") + `<option value="__new">+ New brand…</option>`;
+  sel.innerHTML = tenants.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
+  sel.style.display = tenants.length ? "" : "none";
   if (!tenants.find((t) => t.id === tenantId)) tenantId = tenants[0]?.id || null;
-  if (tenantId) sel.value = tenantId; else sel.value = "__new";
+  if (tenantId) sel.value = tenantId;
   return tenants;
 }
 
+$("#newBrand").addEventListener("click", () => newBrandForm());
 $("#tenantSelect").addEventListener("change", async (e) => {
-  if (e.target.value === "__new") return newBrandForm();
   tenantId = e.target.value; store.set("wa_tenant", tenantId);
   render();
 });
@@ -490,7 +496,7 @@ views.analytics = async (el) => {
 async function render() {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   const el = $("#view");
-  if (!tenantId) { el.innerHTML = `<div class="card"><h2>No brands yet</h2><p>Pick “+ New brand…” in the menu above to add your first client.</p></div>`; return; }
+  if (!tenantId) return newBrandForm();
   el.innerHTML = `<p class="muted">Loading…</p>`;
   try { await views[tab](el); } catch (e) { el.innerHTML = `<div class="card error">${esc(e.message)}</div>`; }
 }

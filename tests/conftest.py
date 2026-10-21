@@ -118,8 +118,19 @@ class GraphFake:
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse(status_code=self.fail_status, content={"error": self.fail_with})
+            if self.fail_after is not None and len(self.sent) >= self.fail_after:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(status_code=400, content={"error": {"message": "Rate limit hit", "code": 130429}})
             self.sent.append(body)
             return {"messages": [{"id": f"wamid.out.{len(self.sent)}"}]}
+
+        @self.app.get("/{version}/{waba_id}/message_templates")
+        async def templates(version: str, waba_id: str):
+            return {"data": self.templates}
+
+        self.fail_after: int | None = None
+        self.templates: list[dict] = []
 
 
 @pytest.fixture

@@ -53,6 +53,10 @@
   .row-chip { display: flex; flex-direction: column; }
   .row-chip span { color: var(--muted); font-size: 12px; }
   .split { display: grid; grid-template-columns: 320px 1fr; gap: 16px; }
+  .bar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--line); }
+  .bar span { display: block; height: 100%; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: var(--bg); }
   .list-item { padding: 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .list-item.active, .list-item:hover { background: var(--bg); }
   .stat { font-size: 24px; font-weight: 600; }
@@ -72,6 +76,7 @@
     <button data-tab="playground">Playground</button>
     <button data-tab="inbox">Inbox</button>
     <button data-tab="leads">Leads &amp; orders</button>
+    <button data-tab="campaigns">Bulk messages</button>
     <button data-tab="analytics">Analytics</button>
   </nav>
   <span style="flex:1"></span>
@@ -155,7 +160,7 @@ $("#tenantSelect").addEventListener("change", async (e) => {
   tenantId = e.target.value; store.set("wa_tenant", tenantId);
   render();
 });
-$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { tab = e.target.dataset.tab; store.set("wa_tab", tab); render(); } });
+$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { tab = e.target.dataset.tab; store.set("wa_tab", tab); openCampaign = null; render(); } });
 $("#logout").addEventListener("click", () => { store.del("wa_admin_token"); askToken(); });
 
 const views = {};
@@ -492,6 +497,188 @@ views.analytics = async (el) => {
       <tr><td>Cache read</td><td>${a.ai_tokens.cache_read.toLocaleString()}</td></tr><tr><td>Cache write</td><td>${a.ai_tokens.cache_write.toLocaleString()}</td></tr></table></div>
   </div>`;
 };
+
+// ---------- Bulk messages (campaigns) ----------
+const RATE = { MARKETING: 0.86, UTILITY: 0.13, AUTHENTICATION: 0.13 }; // approx ₹/message; confirm on Meta's pricing page
+let openCampaign = null;
+let campaignTimer = null;
+
+async function apiForm(path, form) {
+  const res = await fetch(path, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
+  if (res.status === 401 || res.status === 403) { askToken(); throw new Error("Unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data));
+  return data;
+}
+
+function progressBar(c) {
+  const k = c.counts, total = Math.max(c.total, 1);
+  const seg = (n, color) => n ? `<span style="width:${(n / total) * 100}%;background:${color}"></span>` : "";
+  return `<div class="bar">${seg(k.read, "#128c5e")}${seg(k.delivered, "#3fb37f")}${seg(k.sent, "#9fd9bd")}${seg(k.failed, "#b42318")}${seg(k.skipped, "#b4541a")}</div>`;
+}
+
+views.campaigns = async (el) => {
+  clearInterval(campaignTimer);
+  if (openCampaign === "new") return campaignForm(el);
+  if (openCampaign) return campaignDetail(el, openCampaign);
+  const list = await api(T("/campaigns"));
+  el.innerHTML = `
+  <div class="card">
+    <div class="row"><h2 style="margin:0">Bulk messages</h2><span style="flex:1"></span><button class="primary" id="cp_new">+ New campaign</button></div>
+    <p class="muted">Send one approved WhatsApp template to a CSV list of customers. Only message people who agreed to hear from you. Customers who replied STOP are skipped automatically.</p>
+    <div style="overflow-x:auto"><table>
+      <tr><th>Campaign</th><th>Template</th><th>Status</th><th>Progress</th><th>Sent</th><th>Delivered</th><th>Read</th><th>Failed</th></tr>
+      ${list.map((c) => `<tr class="clickable" data-cp="${c.id}"><td><b>${esc(c.name)}</b><br><span class="muted">${new Date(c.created_at).toLocaleString()}</span></td>
+        <td>${esc(c.template_name)}</td><td><span class="pill">${esc(c.status)}</span></td><td style="min-width:120px">${progressBar(c)}</td>
+        <td>${c.counts.sent + c.counts.delivered + c.counts.read}/${c.total}</td><td>${c.counts.delivered + c.counts.read}</td><td>${c.counts.read}</td><td>${c.counts.failed}</td></tr>`).join("")
+        || `<tr><td colspan="8" class="muted">No campaigns yet.</td></tr>`}
+    </table></div>
+  </div>`;
+  $("#cp_new", el).onclick = () => { openCampaign = "new"; render(); };
+  el.querySelectorAll("[data-cp]").forEach((r) => r.onclick = () => { openCampaign = Number(r.dataset.cp); render(); });
+};
+
+async function campaignForm(el) {
+  const { templates, note } = await api(T("/templates"));
+  el.innerHTML = `
+  <div class="card" style="max-width:820px">
+    <div class="row"><h2 style="margin:0">New campaign</h2><span style="flex:1"></span><button class="secondary" id="cp_back">← Back</button></div>
+    <form id="cp_form">
+      <p><label>Campaign name</label><input name="name" required minlength="2" placeholder="e.g. Diwali sale 2026"></p>
+      <p><label>Template (must be approved in WhatsApp Manager)</label>
+        <select id="cp_tpl">${templates.map((t, i) => `<option value="${i}">${esc(t.name)} · ${esc(t.language)} · ${esc(t.category || "")}</option>`).join("")}
+        <option value="manual">Type the template name myself…</option></select></p>
+      ${note ? `<p class="muted">${esc(note)}</p>` : ""}
+      <div id="cp_manual" class="grid" style="display:none">
+        <div><label>Template name</label><input id="cp_mname" placeholder="diwali_offer"></div>
+        <div><label>Language code</label><input id="cp_mlang" value="en"></div>
+        <div><label>Number of variables ({{1}}, {{2}}…)</label><input id="cp_mcount" type="number" min="0" max="10" value="1"></div>
+        <div><label>Category</label><select id="cp_mcat"><option>MARKETING</option><option>UTILITY</option></select></div>
+      </div>
+      <div id="cp_preview" class="bubble out" style="max-width:100%;margin:8px 0;display:none"></div>
+      <p><label>Customer list (CSV with a phone column; other columns can fill the variables)</label>
+        <input type="file" id="cp_file" accept=".csv,text/csv" required></p>
+      <p class="muted" id="cp_cols"></p>
+      <div id="cp_params"></div>
+      <p id="cp_imgwrap" style="display:none"><label>Header image URL (this template has an image header)</label><input id="cp_img" placeholder="https://…/offer.jpg"></p>
+      <label class="row" style="margin:12px 0"><input type="checkbox" id="cp_consent" required style="width:auto"> Everyone in this list has agreed to receive WhatsApp messages from this brand.</label>
+      <button class="primary" id="cp_submit">Upload &amp; check list</button>
+    </form>
+    <div id="cp_result"></div>
+  </div>`;
+  $("#cp_back", el).onclick = () => { openCampaign = null; render(); };
+  let columns = [];
+  const current = () => {
+    const v = $("#cp_tpl", el).value;
+    if (v === "manual") return { name: $("#cp_mname", el).value.trim(), language: $("#cp_mlang", el).value.trim() || "en",
+      param_count: Number($("#cp_mcount", el).value) || 0, category: $("#cp_mcat", el).value, header: null, body: "" };
+    return templates[Number(v)];
+  };
+  const drawParams = () => {
+    const t = current();
+    $("#cp_manual", el).style.display = $("#cp_tpl", el).value === "manual" ? "" : "none";
+    const pv = $("#cp_preview", el);
+    pv.style.display = t?.body ? "" : "none";
+    pv.textContent = t?.body || "";
+    $("#cp_imgwrap", el).style.display = t?.header === "IMAGE" ? "" : "none";
+    const n = t?.param_count || 0;
+    const nameCol = columns.find((c) => /name/i.test(c));
+    $("#cp_params", el).innerHTML = n ? `<label>Fill the variables</label>` + Array.from({ length: n }, (_, i) => `
+      <div class="row" style="margin:6px 0">
+        <span class="pill">{{${i + 1}}}</span>
+        <select data-psrc="${i}" style="width:auto">${columns.map((c) => `<option value="col:${esc(c)}" ${i === 0 && c === nameCol ? "selected" : ""}>Column: ${esc(c)}</option>`).join("")}<option value="text">Same text for everyone</option></select>
+        <input data-pval="${i}" placeholder="${columns.length ? "If empty in CSV, use… (e.g. Customer)" : "Text"}" style="flex:1">
+      </div>`).join("") : "";
+  };
+  $("#cp_tpl", el).onchange = drawParams;
+  ["#cp_mcount"].forEach((id) => $(id, el).oninput = drawParams);
+  $("#cp_file", el).onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const text = await f.text();
+    const first = text.replace(/^﻿/, "").split(/\r?\n/)[0] || "";
+    const cells = first.split(first.includes(";") && !first.includes(",") ? ";" : ",").map((c) => c.trim().replace(/^"|"$/g, ""));
+    const headerless = cells.some((c) => c.replace(/\D/g, "").length >= 10);
+    columns = headerless ? ["phone", "name"] : cells;
+    const rows = text.split(/\r?\n/).filter((l) => l.trim()).length - (headerless ? 0 : 1);
+    $("#cp_cols", el).textContent = `${rows} rows · columns: ${columns.join(", ")}`;
+    drawParams();
+  };
+  drawParams();
+  $("#cp_form", el).onsubmit = async (e) => {
+    e.preventDefault();
+    const t = current();
+    if (!t?.name) return toast("Pick or type a template", true);
+    const params = Array.from({ length: t.param_count || 0 }, (_, i) => {
+      const src = $(`[data-psrc="${i}"]`, el).value, val = $(`[data-pval="${i}"]`, el).value.trim();
+      return src === "text" ? { source: "text", value: val } : { source: "column", value: src.slice(4), fallback: val };
+    });
+    const fd = new FormData();
+    fd.append("name", e.target.name.value.trim());
+    fd.append("template_name", t.name);
+    fd.append("template_language", t.language);
+    if (t.category) fd.append("template_category", t.category);
+    fd.append("params", JSON.stringify(params));
+    if ($("#cp_img", el).value.trim()) fd.append("header_image_url", $("#cp_img", el).value.trim());
+    fd.append("file", $("#cp_file", el).files[0]);
+    const btn = $("#cp_submit", el); btn.disabled = true; btn.textContent = "Checking…";
+    try {
+      const r = await apiForm(T("/campaigns"), fd);
+      $("#cp_result", el).innerHTML = `<div class="card" style="margin-top:16px">
+        <h2>List checked</h2>
+        <p><b>${r.valid - r.opted_out}</b> will receive it · ${r.opted_out} opted out (skipped) · ${r.duplicates} duplicates removed · ${r.invalid} invalid numbers</p>
+        ${r.invalid_samples.length ? `<p class="muted">Invalid: ${r.invalid_samples.map(esc).join(", ")}</p>` : ""}
+        <table><tr><th>Phone</th><th>Name</th><th>Variables</th></tr>${r.preview.map((p) => `<tr><td>+${esc(p.phone)}</td><td>${esc(p.name || "")}</td><td>${p.params.map(esc).join(" · ")}</td></tr>`).join("")}</table>
+        <p><button class="primary" id="cp_open">Continue →</button></p></div>`;
+      $("#cp_open", el).onclick = () => { openCampaign = r.id; render(); };
+    } catch (err) { toast(err.message, true); }
+    btn.disabled = false; btn.textContent = "Upload & check list";
+  };
+}
+
+async function campaignDetail(el, id) {
+  const c = await api(T(`/campaigns/${id}`));
+  const k = c.counts;
+  const toSend = k.pending + k.sent + k.delivered + k.read + k.failed;
+  const rate = RATE[c.template_category] ?? RATE.MARKETING;
+  el.innerHTML = `
+  <div class="card">
+    <div class="row"><h2 style="margin:0">${esc(c.name)}</h2><span class="pill">${esc(c.status)}</span><span style="flex:1"></span><button class="secondary" id="cd_back">← All campaigns</button></div>
+    <p class="muted">Template <b>${esc(c.template_name)}</b> (${esc(c.template_language)}${c.template_category ? ", " + esc(c.template_category) : ""}) · ${c.total} numbers</p>
+    ${progressBar(c)}
+    <div class="grid" style="margin-top:12px">
+      ${[["Waiting", k.pending], ["Sent", k.sent], ["Delivered", k.delivered], ["Read", k.read], ["Failed", k.failed], ["Skipped", k.skipped]]
+        .map(([l, n]) => `<div><div class="muted">${l}</div><div class="stat">${n}</div></div>`).join("")}
+    </div>
+    ${c.status === "draft" ? `
+      <div class="card" style="margin-top:16px">
+        <h2>1. Send yourself a test</h2>
+        <div class="row"><input id="cd_phone" placeholder="Your WhatsApp number, e.g. 98765 43210" style="flex:1"><button class="secondary" id="cd_test">Send test</button></div>
+        <p class="muted" id="cd_test_out"></p>
+        <h2>2. Send to everyone</h2>
+        <p>${toSend} customers · approx Meta charge <b>₹${(toSend * rate).toFixed(0)}</b> <span class="muted">(~₹${rate}/message for ${esc(c.template_category || "MARKETING")}; check Meta's current rates)</span></p>
+        <div class="row"><button class="primary" id="cd_start">Start sending</button><button class="secondary" id="cd_cancel">Discard draft</button></div>
+      </div>` : ""}
+    ${c.status === "sending" ? `<p><button class="secondary" id="cd_cancel">Stop sending</button> <span class="muted">Updates every 5 seconds.</span></p>` : ""}
+    ${c.problems.length ? `<h2 style="margin-top:16px">Not sent</h2><div style="overflow-x:auto"><table><tr><th>Phone</th><th>Name</th><th>Status</th><th>Reason</th></tr>
+      ${c.problems.map((p) => `<tr><td>+${esc(p.phone)}</td><td>${esc(p.name || "")}</td><td>${esc(p.status)}</td><td class="muted">${esc(p.error || "")}</td></tr>`).join("")}</table></div>` : ""}
+  </div>`;
+  $("#cd_back", el).onclick = () => { openCampaign = null; render(); };
+  const test = $("#cd_test", el);
+  if (test) test.onclick = async () => {
+    try {
+      const r = await api(T(`/campaigns/${id}/test`), { method: "POST", body: { phone: $("#cd_phone", el).value } });
+      $("#cd_test_out", el).textContent = r.status === "failed" ? `Failed: ${r.error}` : `Sent (${r.status}). Check your WhatsApp.`;
+    } catch (err) { toast(err.message, true); }
+  };
+  const start = $("#cd_start", el);
+  if (start) start.onclick = async () => {
+    if (!start.dataset.armed) { start.dataset.armed = "1"; start.textContent = `Click again to send to ${toSend} customers`; return; }
+    await api(T(`/campaigns/${id}/start`), { method: "POST" }); toast("Sending started"); render();
+  };
+  const cancelBtn = $("#cd_cancel", el);
+  if (cancelBtn) cancelBtn.onclick = async () => { await api(T(`/campaigns/${id}/cancel`), { method: "POST" }); render(); };
+  if (c.status === "sending") campaignTimer = setInterval(() => { if (tab === "campaigns" && openCampaign === id) render(); else clearInterval(campaignTimer); }, 5000);
+}
 
 async function render() {
   document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));

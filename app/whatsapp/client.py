@@ -4,6 +4,7 @@ Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/messages
 """
 
 import logging
+import re
 import uuid
 from typing import Protocol
 
@@ -28,6 +29,10 @@ PERMANENT_ERROR_CODES = {
 }
 
 
+# Throughput / pair-rate / spam-rate limits: retry later, never mark the customer as failed.
+RATE_LIMIT_CODES = {4, 80007, 130429, 131048, 131056}
+
+
 class WhatsAppError(Exception):
     def __init__(self, message: str, code: int | None = None, status: int | None = None):
         super().__init__(message)
@@ -36,6 +41,8 @@ class WhatsAppError(Exception):
 
     @property
     def permanent(self) -> bool:
+        if self.code in RATE_LIMIT_CODES:
+            return False
         if self.code in PERMANENT_ERROR_CODES:
             return True
         return self.status is not None and 400 <= self.status < 500 and self.status != 429
@@ -168,8 +175,11 @@ def template_message(
     language: str,
     body_params: list[str] | None = None,
     quick_reply_payloads: list[str] | None = None,
+    header_image_url: str | None = None,
 ) -> dict:
     components: list[dict] = []
+    if header_image_url:
+        components.append({"type": "header", "parameters": [{"type": "image", "image": {"link": header_image_url}}]})
     if body_params:
         components.append(
             {"type": "body", "parameters": [{"type": "text", "text": str(p)} for p in body_params]}
@@ -219,3 +229,31 @@ def describe(message: dict) -> str:
         ]
         return f"[template {tpl['name']}] " + ", ".join(params)
     return f"[{kind}]"
+
+
+async def list_templates(http: httpx.AsyncClient, graph_version: str, waba_id: str, access_token: str) -> list[dict]:
+    """Approved message templates of a WhatsApp Business Account, simplified for the dashboard."""
+    url = f"https://graph.facebook.com/{graph_version}/{waba_id}/message_templates"
+    params = {"fields": "name,language,status,category,components", "limit": 200}
+    resp = await http.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"}, timeout=20)
+    data = _json(resp)
+    if resp.status_code >= 400:
+        err = data.get("error", {}) if isinstance(data, dict) else {}
+        raise WhatsAppError(f"Meta API {resp.status_code}: {err.get('message') or resp.text[:200]}", code=err.get("code"), status=resp.status_code)
+    out = []
+    for t in data.get("data", []):
+        if t.get("status") != "APPROVED":
+            continue
+        body = next((c.get("text", "") for c in t.get("components", []) if c.get("type") == "BODY"), "")
+        header = next((c for c in t.get("components", []) if c.get("type") == "HEADER"), {})
+        buttons = next((c.get("buttons", []) for c in t.get("components", []) if c.get("type") == "BUTTONS"), [])
+        out.append({
+            "name": t["name"],
+            "language": t.get("language", "en"),
+            "category": t.get("category"),
+            "body": body,
+            "param_count": len(set(re.findall(r"\{\{(\d+)\}\}", body))),
+            "header": header.get("format"),  # TEXT | IMAGE | VIDEO | DOCUMENT | None
+            "buttons": [b.get("text") for b in buttons],
+        })
+    return sorted(out, key=lambda t: (t["name"], t["language"]))

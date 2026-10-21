@@ -23,6 +23,10 @@ class OutsideServiceWindow(Exception):
 async def sender_for(session: AsyncSession, tenant: Tenant, conv: Conversation) -> Sender:
     if conv.is_playground:
         return SimulatedSender()
+    return await tenant_sender(session, tenant)
+
+
+async def tenant_sender(session: AsyncSession, tenant: Tenant) -> Sender:
     account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant.id))
     # "sandbox-*" numbers are for demos: messages are logged in the inbox but never leave the server.
     if account is None or account.phone_number_id.startswith("sandbox"):

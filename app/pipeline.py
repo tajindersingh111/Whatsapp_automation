@@ -15,7 +15,8 @@ from app.connectors import StoreError, build_connector
 from app.connectors.base import StoreConnector
 from app.jobs import Job, PermanentJobError, enqueue, handler
 from app.menu_bot import menu_followup, run_menu_bot
-from app.models import Contact, Conversation, Message, Order, StoreConnection, Tenant, WebhookEvent, WhatsAppAccount
+from app.models import Campaign, Contact, Conversation, Message, Order, StoreConnection, Tenant, WebhookEvent, WhatsAppAccount
+from app.services import campaigns as campaign_service
 from app.services import catalog
 from app.services.conversations import (
     get_or_create_contact,
@@ -24,7 +25,7 @@ from app.services.conversations import (
     latest_inbound,
     record_message,
 )
-from app.services.messaging import OutsideServiceWindow, send_message, sender_for
+from app.services.messaging import OutsideServiceWindow, send_message, sender_for, tenant_sender
 from app.services.orders import (
     find_order,
     handle_cod_reply,
@@ -412,3 +413,27 @@ async def handle_sync_catalog(session: AsyncSession, job: Job) -> None:
     conn.last_synced_at = datetime.now(timezone.utc)
     conn.last_error = None
     log.info("synced %s products for tenant %s", count, tenant_id)
+
+
+# --- bulk campaigns ---
+
+
+@handler("campaign_send")
+async def handle_campaign_send(session: AsyncSession, job: Job) -> None:
+    campaign_id = job.payload["campaign_id"]
+    campaign = await session.get(Campaign, campaign_id)
+    if campaign is None or campaign.status != "sending":
+        return  # cancelled or finished
+    tenant = await session.get(Tenant, campaign.tenant_id)
+    assert tenant is not None
+    sender = await tenant_sender(session, tenant)
+    result = await campaign_service.send_batch(session, sender, tenant, campaign)
+    campaign = await session.get(Campaign, campaign_id, populate_existing=True)
+    assert campaign is not None
+    if result.rate_limited:
+        await enqueue(session, "campaign_send", {"campaign_id": campaign_id}, tenant_id=tenant.id, delay_seconds=60)
+    elif result.remaining and campaign.status == "sending":
+        await enqueue(session, "campaign_send", {"campaign_id": campaign_id}, tenant_id=tenant.id, delay_seconds=1)
+    elif campaign.status == "sending":
+        campaign.status = "done"
+        campaign.finished_at = datetime.now(timezone.utc)

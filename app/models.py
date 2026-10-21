@@ -241,3 +241,39 @@ class AIUsage(Base):
     cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Campaign(TimestampMixin, Base):
+    """A bulk send of one approved template to a CSV of opted-in customers."""
+
+    __tablename__ = "campaigns"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    template_name: Mapped[str] = mapped_column(String(200))
+    template_language: Mapped[str] = mapped_column(String(20), default="en")
+    template_category: Mapped[str | None] = mapped_column(String(30))
+    # One entry per {{n}} in the template body: {"source": "column" | "text", "value": str, "fallback": str}
+    params: Mapped[list] = mapped_column(JSONB, default=list)
+    header_image_url: Mapped[str | None] = mapped_column(String(1000))
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | sending | done | cancelled
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CampaignRecipient(Base):
+    __tablename__ = "campaign_recipients"
+    __table_args__ = (UniqueConstraint("campaign_id", "phone"), Index("ix_campaign_recipients_status", "campaign_id", "status"))
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"))
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    phone: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str | None] = mapped_column(String(200))
+    vars: Mapped[dict] = mapped_column(JSONB, default=dict)  # all CSV columns for this row
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | sent | delivered | read | failed | skipped
+    wa_message_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

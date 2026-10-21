@@ -10,7 +10,7 @@ from app.config import get_settings
 from app.connectors import build_connector
 from app.db import get_session
 from app.jobs import enqueue
-from app.models import Message, StoreConnection
+from app.models import CampaignRecipient, Message, StoreConnection
 from app.pipeline import serialize_inbound
 from app.security import verify_meta_signature
 from app.whatsapp.webhook import parse_webhook
@@ -41,6 +41,11 @@ async def meta_webhook(request: Request, session: AsyncSession = Depends(get_ses
     for m in messages:
         await enqueue(session, "inbound_message", serialize_inbound(m), dedupe_key=f"wamid:{m.wa_message_id}"[:200], max_attempts=5)
     for st in statuses:
+        recipient = await session.scalar(select(CampaignRecipient).where(CampaignRecipient.wa_message_id == st.wa_message_id))
+        if recipient is not None and _STATUS_RANK.get(st.status, 0) >= _STATUS_RANK.get(recipient.status, 0):
+            recipient.status = st.status
+            if st.error:
+                recipient.error = st.error
         current = await session.scalar(select(Message).where(Message.wa_message_id == st.wa_message_id))
         if current is None:
             continue

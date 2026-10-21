@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WA Agent Console</title>
+<style>
+  :root {
+    --bg: #f6f7f5; --panel: #fff; --ink: #18211d; --muted: #63706a; --line: #e2e6e3;
+    --brand: #128c5e; --brand-ink: #fff; --bubble-in: #fff; --bubble-out: #dcf6e6; --warn: #b4541a; --danger: #b42318;
+    --radius: 10px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1412; --panel: #171e1b; --ink: #e8eeea; --muted: #9aa8a1; --line: #2a3430; --bubble-in: #1f2925; --bubble-out: #12402c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; }
+  header { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0 12px 0 0; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { background: none; border: 0; padding: 8px 12px; border-radius: 8px; color: var(--muted); cursor: pointer; font: inherit; }
+  nav button.active { background: var(--bubble-out); color: var(--ink); font-weight: 600; }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, textarea, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
+  textarea { min-height: 80px; resize: vertical; }
+  button.primary, button.secondary { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--brand); cursor: pointer; font: inherit; }
+  button.primary { background: var(--brand); color: var(--brand-ink); }
+  button.secondary { background: transparent; color: var(--brand); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; background: var(--bg); border: 1px solid var(--line); }
+  .pill.human { border-color: var(--warn); color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 500; }
+  .chat { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg); border-radius: var(--radius); min-height: 320px; max-height: 60vh; overflow-y: auto; }
+  .bubble { max-width: 75%; padding: 8px 10px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; border: 1px solid var(--line); }
+  .bubble.in { align-self: flex-start; background: var(--bubble-in); }
+  .bubble.out { align-self: flex-end; background: var(--bubble-out); }
+  .bubble small { display: block; color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .bubble img { max-width: 220px; border-radius: 8px; display: block; margin-bottom: 4px; }
+  .events { font-size: 12px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chips.list { flex-direction: column; align-items: stretch; }
+  .chip { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--brand); color: var(--brand); background: var(--panel); text-align: left; text-decoration: none; }
+  button.chip { cursor: pointer; }
+  button.chip:hover { background: var(--bubble-out); }
+  .row-chip { display: flex; flex-direction: column; }
+  .row-chip span { color: var(--muted); font-size: 12px; }
+  .split { display: grid; grid-template-columns: 320px 1fr; gap: 16px; }
+  .list-item { padding: 10px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .list-item.active, .list-item:hover { background: var(--bg); }
+  .stat { font-size: 24px; font-weight: 600; }
+  .error { color: var(--danger); }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 8px; display: none; max-width: 360px; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } .bubble { max-width: 90%; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>WA Agent Console</h1>
+  <select id="tenantSelect" style="width:auto;min-width:180px"></select>
+  <nav id="tabs">
+    <button data-tab="setup">Setup</button>
+    <button data-tab="training">Bot training</button>
+    <button data-tab="playground">Playground</button>
+    <button data-tab="inbox">Inbox</button>
+    <button data-tab="leads">Leads &amp; orders</button>
+    <button data-tab="analytics">Analytics</button>
+  </nav>
+  <span style="flex:1"></span>
+  <button class="secondary" id="logout">Change token</button>
+</header>
+<main id="view"></main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (sel, el = document) => el.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+let token = store.get("wa_admin_token");
+let tenantId = store.get("wa_tenant");
+let tab = store.get("wa_tab") || "setup";
+
+function toast(msg, isError) {
+  const t = $("#toast");
+  t.textContent = msg; t.style.display = "block"; t.style.background = isError ? "var(--danger)" : "";
+  clearTimeout(t._h); t._h = setTimeout(() => (t.style.display = "none"), 3500);
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+    body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body,
+  });
+  if (res.status === 401 || res.status === 403) { askToken(); throw new Error("Unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail ?? data);
+    throw new Error(detail);
+  }
+  return data;
+}
+const T = (p = "") => `/admin/tenants/${tenantId}${p}`;
+
+function askToken() {
+  $("#view").innerHTML = `<div class="card" style="max-width:420px;margin:40px auto"><h2>Sign in</h2>
+    <form id="login"><label>Admin token (ADMIN_TOKEN in .env)</label><input id="tok" type="password" autocomplete="current-password" required>
+    <p><button class="primary">Continue</button></p></form></div>`;
+  $("#login").onsubmit = (e) => {
+    e.preventDefault();
+    token = $("#tok").value.trim(); store.set("wa_admin_token", token); boot();
+  };
+}
+
+function newBrandForm() {
+  $("#view").innerHTML = `<div class="card" style="max-width:480px"><h2>New brand</h2>
+    <form id="nb"><label>Brand name</label><input id="nb_name" required minlength="2">
+    <p class="row"><button class="primary">Create</button><button type="button" class="secondary" id="nb_cancel">Cancel</button></p></form></div>`;
+  $("#nb_cancel").onclick = () => { $("#tenantSelect").value = tenantId || ""; render(); };
+  $("#nb").onsubmit = async (e) => {
+    e.preventDefault();
+    const r = await api("/admin/tenants", { method: "POST", body: { name: $("#nb_name").value.trim() } });
+    tenantId = r.id; store.set("wa_tenant", tenantId); tab = "setup"; await loadTenants(); render();
+  };
+}
+
+async function loadTenants() {
+  const tenants = await api("/admin/tenants");
+  const sel = $("#tenantSelect");
+  sel.innerHTML = tenants.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("") + `<option value="__new">+ New brand…</option>`;
+  if (!tenants.find((t) => t.id === tenantId)) tenantId = tenants[0]?.id || null;
+  if (tenantId) sel.value = tenantId; else sel.value = "__new";
+  return tenants;
+}
+
+$("#tenantSelect").addEventListener("change", async (e) => {
+  if (e.target.value === "__new") return newBrandForm();
+  tenantId = e.target.value; store.set("wa_tenant", tenantId);
+  render();
+});
+$("#tabs").addEventListener("click", (e) => { if (e.target.dataset.tab) { tab = e.target.dataset.tab; store.set("wa_tab", tab); render(); } });
+$("#logout").addEventListener("click", () => { store.del("wa_admin_token"); askToken(); });
+
+const views = {};
+
+views.setup = async (el) => {
+  const t = await api(T());
+  el.innerHTML = `
+  <div class="card"><h2>${esc(t.name)}</h2>
+    <p class="muted">Tenant id: <code>${t.id}</code> · Active products: <b>${t.active_products}</b> · Status: ${t.active ? "active" : "paused"}</p>
+    <p class="muted">Meta webhook URL (same for every brand): <code>${esc(t.meta_webhook_url)}</code></p>
+  </div>
+  <div class="card"><h2>1. WhatsApp number</h2>
+    ${t.whatsapp ? `<p>Connected: <b>${esc(t.whatsapp.display_phone || t.whatsapp.phone_number_id)}</b> (phone number id ${esc(t.whatsapp.phone_number_id)})</p>` : `<p class="muted">Not connected. Until then, replies are only simulated (use the Playground).</p>`}
+    <div class="grid">
+      <div><label>Phone number ID</label><input id="wa_pnid" value="${esc(t.whatsapp?.phone_number_id || "")}"></div>
+      <div><label>WABA ID</label><input id="wa_waba" value="${esc(t.whatsapp?.waba_id || "")}"></div>
+      <div><label>Display phone</label><input id="wa_phone" placeholder="+91 98xxx xxxxx" value="${esc(t.whatsapp?.display_phone || "")}"></div>
+      <div><label>Permanent access token (system user)</label><input id="wa_token" type="password" placeholder="${t.whatsapp ? "•••••• (leave to keep)" : "EAAG…"}"></div>
+    </div>
+    <p><button class="primary" id="wa_save">Save WhatsApp</button></p>
+  </div>
+  <div class="card"><h2>2. Store</h2>
+    ${t.store ? `<p>Connected: <b>${esc(t.store.kind)}</b> · ${esc(t.store.base_url)}<br>
+      Last sync: ${t.store.last_synced_at ? new Date(t.store.last_synced_at).toLocaleString() : "never"} ${t.store.last_error ? `<span class="error">· ${esc(t.store.last_error)}</span>` : ""}<br>
+      Store webhook URL: <code>${esc(t.store.webhook_url)}</code></p>
+      <p><button class="secondary" id="st_sync">Sync products now</button></p>` : `<p class="muted">Not connected.</p>`}
+    <div class="grid">
+      <div><label>Platform</label><select id="st_kind">
+        <option value="custom">Custom / Next.js (WA Agent kit)</option><option value="shopify">Shopify</option><option value="woocommerce">WooCommerce</option></select></div>
+      <div><label id="st_url_label">Store API URL</label><input id="st_url" placeholder="https://yourstore.com/api/wa-agent"></div>
+    </div>
+    <div class="grid" id="st_creds" style="margin-top:12px"></div>
+    ${t.store?.kind === "custom" ? `<label class="row" style="margin-top:12px"><input type="checkbox" id="st_rotate" style="width:auto"> Issue a new shared secret (the store's WA_AGENT_SECRET must be updated)</label>` : ""}
+    <p><button class="primary" id="st_save">Connect store</button></p>
+    <div id="st_result"></div>
+  </div>`;
+  const kind = $("#st_kind", el);
+  if (t.store) kind.value = t.store.kind;
+  const credFields = {
+    custom: [["secret", t.store ? "Shared secret (leave empty to keep the current one)" : "Shared secret (leave empty to generate)"]],
+    shopify: [["access_token", "Admin API access token"], ["api_secret", "App API secret (webhooks)"], ["storefront_url", "Storefront URL (optional, e.g. https://brand.in)"]],
+    woocommerce: [["consumer_key", "Consumer key"], ["consumer_secret", "Consumer secret"], ["webhook_secret", "Webhook secret"]],
+  };
+  const urlLabels = { custom: "Store API URL (…/api/wa-agent)", shopify: "Shop URL (https://x.myshopify.com)", woocommerce: "Site URL" };
+  const drawCreds = () => {
+    $("#st_url_label", el).textContent = urlLabels[kind.value];
+    $("#st_creds", el).innerHTML = credFields[kind.value].map(([k, l]) => `<div><label>${l}</label><input data-cred="${k}" type="${k.includes("url") ? "text" : "password"}"></div>`).join("");
+  };
+  kind.addEventListener("change", drawCreds); drawCreds();
+  if (t.store) $("#st_url", el).value = t.store.base_url;
+
+  $("#wa_save", el).onclick = async () => {
+    const access_token = $("#wa_token", el).value.trim() || null;
+    if (!access_token && !t.whatsapp) return toast("Enter the access token", true);
+    await api(T("/whatsapp"), { method: "PUT", body: { phone_number_id: $("#wa_pnid", el).value.trim(), waba_id: $("#wa_waba", el).value.trim() || null, display_phone: $("#wa_phone", el).value.trim() || null, access_token } });
+    toast("WhatsApp saved"); render();
+  };
+  $("#st_save", el).onclick = async () => {
+    const credentials = {};
+    el.querySelectorAll("[data-cred]").forEach((i) => { if (i.value.trim()) credentials[i.dataset.cred] = i.value.trim(); });
+    const rotate = $("#st_rotate", el)?.checked && kind.value === "custom";
+    const r = await api(T("/store"), { method: "PUT", body: { kind: kind.value, base_url: $("#st_url", el).value.trim(), credentials, rotate_secret: !!rotate } });
+    $("#st_result", el).innerHTML = `<p>Saved. Product sync started.</p>
+      <p>Webhook URL for the store: <code>${esc(r.webhook_url)}</code></p>
+      ${r.shared_secret ? `<p><b>Shared secret (shown once):</b> <code>${esc(r.shared_secret)}</code><br><span class="muted">${esc(r.note)}</span></p>` : ""}`;
+    toast("Store connected");
+  };
+  const sync = $("#st_sync", el);
+  if (sync) sync.onclick = async () => { await api(T("/store/sync"), { method: "POST" }); toast("Sync queued. Refresh in a few seconds."); };
+};
+
+views.training = async (el) => {
+  const [cfg, knowledge, corrections] = await Promise.all([api(T("/config")), api(T("/knowledge")), api(T("/corrections"))]);
+  el.innerHTML = `
+  <div class="card"><h2>Reply mode</h2>
+    <div class="grid">
+      <div><label>How the bot replies</label><select id="c_mode">
+        <option value="menu">Menu bot: buttons, FAQ, product search (no AI cost)</option>
+        <option value="ai">AI sales bot: free conversation (Claude, billed per use)</option></select></div>
+    </div>
+    <p class="muted">Both modes use the same catalog, knowledge and approved answers. COD confirmation, shipping updates and tracking never use AI.</p>
+    <details><summary class="muted">Menu bot texts</summary>
+      <p class="muted">You can use {name}, {brand}, {hours} and {product}. Button labels max 20 characters.</p>
+      <div class="grid">
+        <div><label>Welcome message</label><textarea id="m_welcome">${esc(cfg.menu.welcome_text)}</textarea></div>
+        <div><label>When the bot doesn't understand</label><textarea id="m_unknown">${esc(cfg.menu.not_understood)}</textarea></div>
+        <div><label>Hand-over message</label><textarea id="m_handoff">${esc(cfg.menu.handoff_text)}</textarea></div>
+        <div><label>Follow-up (sent once if the customer goes quiet)</label><textarea id="m_follow">${esc(cfg.menu.followup_text)}</textarea></div>
+        <div><label>Button: products</label><input id="m_b1" maxlength="20" value="${esc(cfg.menu.products_label)}"></div>
+        <div><label>Button: track order</label><input id="m_b2" maxlength="20" value="${esc(cfg.menu.track_label)}"></div>
+        <div><label>Button: talk to team</label><input id="m_b3" maxlength="20" value="${esc(cfg.menu.human_label)}"></div>
+      </div>
+    </details>
+  </div>
+  <div class="card"><h2>Personality &amp; rules</h2>
+    <div class="grid">
+      <div><label>Brand name</label><input id="c_brand" value="${esc(cfg.brand_name)}"></div>
+      <div><label>Assistant name</label><input id="c_assistant" value="${esc(cfg.assistant_name)}"></div>
+      <div><label>Website</label><input id="c_url" value="${esc(cfg.store_url || "")}"></div>
+      <div><label>Support hours</label><input id="c_hours" value="${esc(cfg.support_hours)}"></div>
+    </div>
+    <p><label>About the brand (what you sell, who buys, what makes you different)</label><textarea id="c_about">${esc(cfg.about)}</textarea></p>
+    <div class="grid">
+      <div><label>Tone</label><textarea id="c_tone">${esc(cfg.tone)}</textarea></div>
+      <div><label>Language</label><textarea id="c_lang">${esc(cfg.language)}</textarea></div>
+    </div>
+    <p class="muted">Personality, tone and rules are used by the AI bot. Knowledge, offers and approved answers are used by both bots.</p>
+    <p><label>Rules (one per line)</label><textarea id="c_rules">${esc(cfg.rules.join("\n"))}</textarea></p>
+    <p><label>Offers (one per line: CODE | description)</label><textarea id="c_offers">${esc(cfg.offers.map((o) => `${o.code} | ${o.description}`).join("\n"))}</textarea></p>
+    <p><label>Always hand over to a human for (comma separated)</label><input id="c_handoff" value="${esc(cfg.handoff_triggers.join(", "))}"></p>
+    <div class="row">
+      <label class="row" style="margin:0"><input type="checkbox" id="c_enabled" style="width:auto" ${cfg.enabled ? "checked" : ""}> Bot replies enabled</label>
+      <label class="row" style="margin:0"><input type="checkbox" id="c_cod" style="width:auto" ${cfg.allow_cod_orders_in_chat ? "checked" : ""}> Allow COD orders in chat</label>
+      <label class="row" style="margin:0"><input type="checkbox" id="c_codflow" style="width:auto" ${cfg.cod_confirmation.enabled ? "checked" : ""}> COD confirmation for website orders</label>
+      <label class="row" style="margin:0"><input type="checkbox" id="c_ship" style="width:auto" ${cfg.shipping_update.enabled ? "checked" : ""}> Shipping updates</label>
+      <label class="row" style="margin:0"><input type="checkbox" id="c_follow" style="width:auto" ${cfg.lead_followup.enabled ? "checked" : ""}> Follow up silent leads</label>
+    </div>
+    <details style="margin-top:12px"><summary class="muted">Advanced (templates, timings, model) as JSON</summary>
+      <textarea id="c_json" style="min-height:240px;font-family:monospace;font-size:12px">${esc(JSON.stringify(cfg, null, 2))}</textarea>
+      <p class="muted">Edits here are applied first; the form fields above override them.</p>
+    </details>
+    <p><button class="primary" id="c_save">Save</button></p>
+  </div>
+  <div class="card"><h2>Knowledge (policies, FAQs, shipping, size guide)</h2>
+    <div id="k_list">${knowledge.map((k) => `
+      <details class="list-item" style="cursor:default"><summary><b>${esc(k.title)}</b> <span class="muted">${esc(k.content.slice(0, 80))}…</span></summary>
+        <p><input data-kt="${k.id}" value="${esc(k.title)}"></p><p><textarea data-kc="${k.id}">${esc(k.content)}</textarea></p>
+        <div class="row"><button class="secondary" data-ksave="${k.id}">Save</button><button class="secondary" data-kdel="${k.id}">Delete</button></div>
+      </details>`).join("") || `<p class="muted">Nothing yet. Add your return policy, shipping times, COD rules, care instructions…</p>`}</div>
+    <h3 style="font-size:13px">Add</h3>
+    <p><input id="k_title" placeholder="Title, e.g. Shipping & delivery"></p>
+    <p><textarea id="k_content" placeholder="Write it the way you'd explain it to a new sales person."></textarea></p>
+    <button class="primary" id="k_add">Add knowledge</button>
+  </div>
+  <div class="card"><h2>Approved answers</h2>
+    <p class="muted">When the bot gets something wrong, write the right answer here. It will reuse it for similar questions.</p>
+    <table><tr><th>Customer asks</th><th>Bot should answer</th><th></th></tr>
+    ${corrections.map((c) => `<tr><td>${esc(c.question)}</td><td>${esc(c.answer)}</td><td><button class="secondary" data-cdel="${c.id}">Delete</button></td></tr>`).join("")}</table>
+    <div class="grid" style="margin-top:12px">
+      <div><label>Customer asks</label><textarea id="q_q"></textarea></div>
+      <div><label>Bot should answer</label><textarea id="q_a"></textarea></div>
+    </div>
+    <p><button class="primary" id="q_add">Add answer</button></p>
+  </div>`;
+
+  $("#c_mode", el).value = cfg.reply_mode;
+  $("#c_save", el).onclick = async () => {
+    let base;
+    try { base = JSON.parse($("#c_json", el).value); } catch { return toast("Advanced JSON is invalid", true); }
+    const lines = (id) => $(id, el).value.split("\n").map((s) => s.trim()).filter(Boolean);
+    const body = {
+      ...base,
+      brand_name: $("#c_brand", el).value, assistant_name: $("#c_assistant", el).value, store_url: $("#c_url", el).value || null,
+      support_hours: $("#c_hours", el).value, about: $("#c_about", el).value, tone: $("#c_tone", el).value, language: $("#c_lang", el).value,
+      rules: lines("#c_rules"),
+      offers: lines("#c_offers").map((l) => { const [code, ...d] = l.split("|"); return { code: code.trim(), description: d.join("|").trim() }; }),
+      handoff_triggers: $("#c_handoff", el).value.split(",").map((s) => s.trim()).filter(Boolean),
+      enabled: $("#c_enabled", el).checked, allow_cod_orders_in_chat: $("#c_cod", el).checked,
+      reply_mode: $("#c_mode", el).value,
+      menu: { ...base.menu, welcome_text: $("#m_welcome", el).value, not_understood: $("#m_unknown", el).value,
+        handoff_text: $("#m_handoff", el).value, followup_text: $("#m_follow", el).value,
+        products_label: $("#m_b1", el).value, track_label: $("#m_b2", el).value, human_label: $("#m_b3", el).value },
+      cod_confirmation: { ...base.cod_confirmation, enabled: $("#c_codflow", el).checked },
+      shipping_update: { ...base.shipping_update, enabled: $("#c_ship", el).checked },
+      lead_followup: { ...base.lead_followup, enabled: $("#c_follow", el).checked },
+    };
+    await api(T("/config"), { method: "PUT", body }); toast("Saved. The bot uses it from the next message."); render();
+  };
+  $("#k_add", el).onclick = async () => {
+    await api(T("/knowledge"), { method: "POST", body: { title: $("#k_title", el).value, content: $("#k_content", el).value } }); toast("Added"); render();
+  };
+  el.querySelectorAll("[data-ksave]").forEach((b) => b.onclick = async () => {
+    const id = b.dataset.ksave;
+    await api(T(`/knowledge/${id}`), { method: "PUT", body: { title: $(`[data-kt="${id}"]`, el).value, content: $(`[data-kc="${id}"]`, el).value } }); toast("Saved");
+  });
+  el.querySelectorAll("[data-kdel]").forEach((b) => b.onclick = async () => {
+    if (b.dataset.armed) { await api(T(`/knowledge/${b.dataset.kdel}`), { method: "DELETE" }); return render(); }
+    b.dataset.armed = "1"; b.textContent = "Click again to delete";
+  });
+  $("#q_add", el).onclick = async () => {
+    await api(T("/corrections"), { method: "POST", body: { question: $("#q_q", el).value, answer: $("#q_a", el).value } }); toast("Added"); render();
+  };
+  el.querySelectorAll("[data-cdel]").forEach((b) => b.onclick = async () => { await api(T(`/corrections/${b.dataset.cdel}`), { method: "DELETE" }); render(); });
+};
+
+function chips(m, clickable) {
+  const it = m.payload?.interactive;
+  if (!it) return "";
+  const chip = (id, title) => clickable
+    ? `<button class="chip" data-id="${esc(id)}" data-title="${esc(title)}">${esc(title)}</button>`
+    : `<span class="chip">${esc(title)}</span>`;
+  if (it.type === "button") return `<div class="chips">${it.action.buttons.map((b) => chip(b.reply.id, b.reply.title)).join("")}</div>`;
+  if (it.type === "list") return `<div class="chips list"><span class="muted" style="font-size:12px">☰ ${esc(it.action.button)}</span>${
+    it.action.sections.flatMap((sec) => sec.rows).map((r) => clickable
+      ? `<button class="chip row-chip" data-id="${esc(r.id)}" data-title="${esc(r.title)}"><b>${esc(r.title)}</b>${r.description ? `<span>${esc(r.description)}</span>` : ""}</button>`
+      : `<span class="chip">${esc(r.title)}</span>`).join("")}</div>`;
+  if (it.type === "cta_url") return `<div class="chips"><a class="chip" href="${esc(it.action.parameters.url)}" target="_blank" rel="noopener noreferrer">↗ ${esc(it.action.parameters.display_text)}</a></div>`;
+  return "";
+}
+
+function bubble(m, clickable = false) {
+  const out = m.direction === "out";
+  const it = m.payload?.interactive;
+  const imgUrl = m.payload?.image?.link || it?.header?.image?.link;
+  const img = imgUrl ? `<img src="${esc(imgUrl)}" alt="">` : "";
+  const text = it ? (it.body?.text || "") : m.body;
+  const who = m.sender ? `${m.sender}${m.status ? " · " + m.status : ""}` : "";
+  return `<div class="bubble ${out ? "out" : "in"}">${img}${esc(text)}${chips(m, clickable)}${who ? `<small>${esc(who)}${m.error ? ` · <span class="error">${esc(m.error)}</span>` : ""}</small>` : ""}</div>`;
+}
+
+views.playground = async (el) => {
+  const session = store.get("wa_pg_session") || "default";
+  el.innerHTML = `
+  <div class="card"><h2>Playground</h2>
+    <p class="muted">Chat as a customer: type, or tap the buttons in replies. Uses the real catalog and training. Orders are simulated and nothing is sent on WhatsApp.</p>
+    <div class="chat" id="pg_chat"></div>
+    <div class="row" style="margin-top:12px">
+      <input id="pg_input" placeholder="e.g. hi · blue bedsheet · delivery kab hogi?" style="flex:1">
+      <button class="primary" id="pg_send">Send</button>
+      <button class="secondary" id="pg_reset">Reset chat</button>
+    </div>
+    <div class="events" id="pg_events"></div>
+  </div>`;
+  const chat = $("#pg_chat", el);
+  const post = async (body, shown) => {
+    chat.insertAdjacentHTML("beforeend", `<div class="bubble in">${esc(shown)}</div>`);
+    const btn = $("#pg_send", el); btn.disabled = true; btn.textContent = "…";
+    try {
+      const r = await api(T("/playground"), { method: "POST", body: { ...body, session } });
+      r.replies.forEach((m) => chat.insertAdjacentHTML("beforeend", bubble({ ...m, direction: "out" }, true)));
+      const ev = r.events.map((e) => e.type === "tool" ? `${e.name}${e.error ? " (error)" : ""}` : e.type === "faq" ? `faq:${e.source}` : e.type);
+      $("#pg_events", el).textContent = `Mode: ${r.reply_mode === "menu" ? "menu bot (no AI)" : "AI"} · Lead stage: ${r.lead_stage}${r.handed_off ? " · handed off to human" : ""}${ev.length ? " · " + ev.join(", ") : ""}`;
+    } catch (e) { toast(e.message, true); }
+    btn.disabled = false; btn.textContent = "Send"; chat.scrollTop = chat.scrollHeight;
+  };
+  const send = () => {
+    const input = $("#pg_input", el); const text = input.value.trim(); if (!text) return;
+    input.value = ""; post({ message: text }, text);
+  };
+  chat.addEventListener("click", (e) => {
+    const b = e.target.closest("button.chip"); if (!b) return;
+    post({ button: { id: b.dataset.id, title: b.dataset.title } }, b.dataset.title);
+  });
+  $("#pg_send", el).onclick = send;
+  $("#pg_input", el).addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  $("#pg_reset", el).onclick = async () => { await api(T(`/playground/${session}`), { method: "DELETE" }); chat.innerHTML = ""; $("#pg_events", el).textContent = ""; };
+};
+
+let openConv = null;
+views.inbox = async (el) => {
+  const convs = await api(T("/conversations"));
+  el.innerHTML = `<div class="split">
+    <div class="card" style="padding:0;max-height:75vh;overflow:auto">${convs.map((c) => `
+      <div class="list-item ${c.id === openConv ? "active" : ""}" data-conv="${c.id}">
+        <div class="row"><b>${esc(c.contact.name || "+" + c.contact.wa_id)}</b><span class="pill ${c.mode}">${c.mode}</span><span class="pill">${esc(c.contact.lead_stage)}</span></div>
+        <div class="muted">${esc(c.preview)}</div>
+        ${c.handoff_reason ? `<div style="color:var(--warn);font-size:12px">${esc(c.handoff_reason)}</div>` : ""}
+      </div>`).join("") || `<p class="muted" style="padding:12px">No conversations yet.</p>`}</div>
+    <div class="card" id="conv_panel"><p class="muted">Pick a conversation.</p></div>
+  </div>`;
+  el.querySelectorAll("[data-conv]").forEach((d) => d.onclick = () => { openConv = Number(d.dataset.conv); render(); });
+  const c = convs.find((x) => x.id === openConv);
+  if (!c) return;
+  const msgs = await api(T(`/conversations/${c.id}/messages`));
+  const panel = $("#conv_panel", el);
+  panel.innerHTML = `
+    <div class="row"><h2 style="margin:0">${esc(c.contact.name || "")} +${esc(c.contact.wa_id)}</h2><span style="flex:1"></span>
+      ${c.mode === "bot" ? `<button class="secondary" id="take">Take over</button>` : `<button class="secondary" id="release">Hand back to bot</button>`}</div>
+    <p class="muted">${c.contact.lead_note ? "Lead: " + esc(c.contact.lead_note) + " · " : ""}${c.contact.source ? "Source: " + esc(c.contact.source) : ""}</p>
+    <div class="chat" id="conv_chat">${msgs.map((m) => `${bubble(m)}${m.direction === "out" && m.sender === "bot" ? `<button class="secondary" style="align-self:flex-end;font-size:12px;padding:2px 8px" data-fix="${m.id}">Teach a better answer</button>` : ""}`).join("")}</div>
+    <div class="row" style="margin-top:12px">
+      <input id="reply" placeholder="${c.can_reply ? "Reply as the team…" : "24h window closed: only templates can be sent"}" style="flex:1" ${c.can_reply ? "" : "disabled"}>
+      <button class="primary" id="send" ${c.can_reply ? "" : "disabled"}>Send</button>
+    </div>`;
+  const chat = $("#conv_chat", panel); chat.scrollTop = chat.scrollHeight;
+  const setMode = async (mode) => { await api(T(`/conversations/${c.id}/mode`), { method: "POST", body: { mode } }); render(); };
+  const take = $("#take", panel); if (take) take.onclick = () => setMode("human");
+  const rel = $("#release", panel); if (rel) rel.onclick = () => setMode("bot");
+  $("#send", panel).onclick = async () => {
+    const text = $("#reply", panel).value.trim(); if (!text) return;
+    if (c.mode === "bot") await api(T(`/conversations/${c.id}/mode`), { method: "POST", body: { mode: "human" } });
+    const r = await api(T(`/conversations/${c.id}/messages`), { method: "POST", body: { text } });
+    if (r.error) toast(r.error, true); render();
+  };
+  panel.querySelectorAll("[data-fix]").forEach((b) => b.onclick = () => {
+    const idx = msgs.findIndex((m) => m.id === Number(b.dataset.fix));
+    const question = [...msgs.slice(0, idx)].reverse().find((m) => m.direction === "in")?.body || "";
+    const form = document.createElement("form");
+    form.className = "card"; form.style.alignSelf = "stretch";
+    form.innerHTML = `<label>Customer asked</label><textarea name="q">${esc(question)}</textarea>
+      <label style="margin-top:8px">Bot should answer</label><textarea name="a">${esc(msgs[idx].body)}</textarea>
+      <p class="row"><button class="primary">Save approved answer</button><button type="button" class="secondary" data-cancel>Cancel</button></p>`;
+    b.replaceWith(form);
+    form.querySelector("[data-cancel]").onclick = () => render();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      await api(T("/corrections"), { method: "POST", body: { question: form.q.value, answer: form.a.value, source_message_id: msgs[idx].id } });
+      toast("Saved. The bot will use this answer from now on."); render();
+    };
+  });
+};
+
+views.leads = async (el) => {
+  const [leads, orders] = await Promise.all([api(T("/leads")), api(T("/orders"))]);
+  el.innerHTML = `
+  <div class="card"><h2>Leads</h2><div style="overflow-x:auto"><table>
+    <tr><th>Customer</th><th>Stage</th><th>What they want</th><th>Source</th><th>Last message</th></tr>
+    ${leads.map((l) => `<tr><td>${esc(l.name || "")}<br><span class="muted">+${esc(l.wa_id)}</span></td><td><span class="pill">${esc(l.stage)}</span>${l.opted_out ? ' <span class="pill human">opted out</span>' : ""}</td>
+      <td>${esc(l.note || "")}</td><td class="muted">${esc(l.source || "")}</td><td class="muted">${l.last_inbound_at ? new Date(l.last_inbound_at).toLocaleString() : ""}</td></tr>`).join("")}
+  </table></div></div>
+  <div class="card"><h2>Orders</h2><div style="overflow-x:auto"><table>
+    <tr><th>Order</th><th>Customer</th><th>Total</th><th>Payment</th><th>COD confirmation</th><th>Via</th><th>Status</th></tr>
+    ${orders.map((o) => `<tr><td>${esc(o.number)}</td><td>${esc(o.customer_name || "")}<br><span class="muted">${esc(o.customer_phone || "")}</span></td>
+      <td>₹${Number(o.total).toLocaleString("en-IN")}</td><td>${esc(o.payment_method)}</td><td>${esc(o.cod_status || "")}</td><td>${esc(o.created_via)}</td>
+      <td>${esc(o.status)}${o.tracking?.awb ? `<br><span class="muted">${esc(o.tracking.courier || "")} ${esc(o.tracking.awb)}</span>` : ""}</td></tr>`).join("")}
+  </table></div></div>`;
+};
+
+views.analytics = async (el) => {
+  const a = await api(T("/analytics?days=30"));
+  const stat = (label, value) => `<div class="card"><div class="muted">${label}</div><div class="stat">${value}</div></div>`;
+  const cod = a.cod_confirmation;
+  const codTotal = Object.values(cod).reduce((s, n) => s + n, 0);
+  el.innerHTML = `<p class="muted">Last ${a.days} days</p>
+  <div class="grid">
+    ${stat("Conversations", a.conversations)}${stat("Customer messages", a.messages_in)}${stat("Bot replies", a.bot_replies)}
+    ${stat("Open handoffs", a.open_handoffs)}${stat("Orders placed by bot", a.orders_by_bot.count)}${stat("Bot revenue", "₹" + Number(a.orders_by_bot.revenue).toLocaleString("en-IN"))}
+  </div>
+  <div class="grid">
+    <div class="card"><h2>Leads by stage</h2><table>${Object.entries(a.leads_by_stage).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td></tr>`).join("") || "<tr><td class='muted'>No leads yet</td></tr>"}</table></div>
+    <div class="card"><h2>COD confirmation</h2><table>${Object.entries(cod).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${v}</td><td class="muted">${codTotal ? Math.round((v / codTotal) * 100) : 0}%</td></tr>`).join("") || "<tr><td class='muted'>No COD orders yet</td></tr>"}</table></div>
+    <div class="card"><h2>AI usage (tokens)</h2><table>
+      <tr><td>Input</td><td>${a.ai_tokens.input.toLocaleString()}</td></tr><tr><td>Output</td><td>${a.ai_tokens.output.toLocaleString()}</td></tr>
+      <tr><td>Cache read</td><td>${a.ai_tokens.cache_read.toLocaleString()}</td></tr><tr><td>Cache write</td><td>${a.ai_tokens.cache_write.toLocaleString()}</td></tr></table></div>
+  </div>`;
+};
+
+async function render() {
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  const el = $("#view");
+  if (!tenantId) { el.innerHTML = `<div class="card"><h2>No brands yet</h2><p>Pick “+ New brand…” in the menu above to add your first client.</p></div>`; return; }
+  el.innerHTML = `<p class="muted">Loading…</p>`;
+  try { await views[tab](el); } catch (e) { el.innerHTML = `<div class="card error">${esc(e.message)}</div>`; }
+}
+
+async function boot() {
+  if (!token) return askToken();
+  try { await loadTenants(); render(); } catch (e) { $("#view").innerHTML = `<div class="card error">${esc(e.message)}</div>`; }
+}
+boot();
+</script>
+</body>
+</html>

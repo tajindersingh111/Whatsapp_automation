@@ -1,0 +1,14 @@
+.venv/
+.pgdata/
+.env
+.env.*
+!.env.example
+deploy/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.claude/
+tests/
+scripts/
+integrations/

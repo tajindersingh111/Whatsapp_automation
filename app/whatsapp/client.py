@@ -257,3 +257,41 @@ async def list_templates(http: httpx.AsyncClient, graph_version: str, waba_id: s
             "buttons": [b.get("text") for b in buttons],
         })
     return sorted(out, key=lambda t: (t["name"], t["language"]))
+
+
+async def check_connection(http: httpx.AsyncClient, graph_version: str, phone_number_id: str, waba_id: str | None, access_token: str) -> dict:
+    """Validate a client's number + token with Meta and subscribe our app to their WhatsApp account.
+
+    Subscribing is what makes Meta deliver that account's customer messages to our webhook.
+    """
+    base = f"https://graph.facebook.com/{graph_version}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    result: dict = {"ok": False, "phone": None, "subscribed": False, "problems": []}
+
+    resp = await http.get(f"{base}/{phone_number_id}", params={"fields": "display_phone_number,verified_name,quality_rating,name_status,platform_type"}, headers=headers, timeout=20)
+    if resp.status_code == 400 and "nonexisting field" in resp.text.lower():
+        resp = await http.get(f"{base}/{phone_number_id}", params={"fields": "display_phone_number,verified_name,quality_rating"}, headers=headers, timeout=20)
+    data = _json(resp)
+    if resp.status_code >= 400:
+        err = data.get("error", {}) if isinstance(data, dict) else {}
+        if err.get("code") == 190 or resp.status_code == 401:
+            result["problems"].append("Access token is invalid or expired. Generate a permanent system-user token.")
+        else:
+            result["problems"].append(f"Meta could not find this phone number id: {err.get('message') or resp.text[:200]}")
+        return result
+    result["phone"] = {k: data.get(k) for k in ("display_phone_number", "verified_name", "quality_rating", "name_status", "platform_type")}
+    if data.get("platform_type") and data["platform_type"] != "CLOUD_API":
+        result["problems"].append("This number is not registered on the Cloud API yet. Finish 'Production setup' in Meta (verify OTP + set PIN).")
+
+    if not waba_id:
+        result["problems"].append("Add the WhatsApp Business Account (WABA) ID so customer messages and templates work.")
+    else:
+        sub = await http.post(f"{base}/{waba_id}/subscribed_apps", headers=headers, timeout=20)
+        sub_data = _json(sub)
+        if sub.status_code < 400 and sub_data.get("success"):
+            result["subscribed"] = True
+        else:
+            err = sub_data.get("error", {}) if isinstance(sub_data, dict) else {}
+            result["problems"].append(f"Could not subscribe the app to this WhatsApp account: {err.get('message') or sub.text[:200]}")
+    result["ok"] = not result["problems"]
+    return result

@@ -100,3 +100,26 @@ async def test_reconnecting_store_keeps_secret_unless_rotated(api, db, http):
     assert (await api.put(f"/admin/tenants/{tid}/whatsapp", json={"phone_number_id": "123456"}, headers=ADMIN)).status_code == 422
     assert (await api.put(f"/admin/tenants/{tid}/whatsapp", json={"phone_number_id": "123456", "access_token": "EAAG-token-123"}, headers=ADMIN)).status_code == 200
     assert (await api.put(f"/admin/tenants/{tid}/whatsapp", json={"phone_number_id": "123456", "display_phone": "+91 9"}, headers=ADMIN)).status_code == 200
+
+
+async def test_connect_whatsapp_validates_and_subscribes(api, db, http, graph):
+    tid = (await api.post("/admin/tenants", json={"name": "Brand"}, headers=ADMIN)).json()["id"]
+    r = await api.put(f"/admin/tenants/{tid}/whatsapp", json={"phone_number_id": "5550001", "waba_id": "777", "access_token": "EAAG-good-token"}, headers=ADMIN)
+    check = r.json()["check"]
+    assert check["ok"] and check["subscribed"] and check["phone"]["verified_name"] == "Jaipur Linen Co"
+    assert graph.subscribed == ["777"]
+
+    r = await api.put(f"/admin/tenants/{tid}/whatsapp", json={"phone_number_id": "5550001", "access_token": "expired-token-x"}, headers=ADMIN)
+    assert r.status_code == 200
+    from app.models import WhatsAppAccount
+    from app.security import encrypt
+
+    account = await db.scalar(select(WhatsAppAccount).where(WhatsAppAccount.phone_number_id == "5550001"))
+    account.access_token_enc = encrypt("expired")
+    await db.commit()
+    check = (await api.post(f"/admin/tenants/{tid}/whatsapp/check", headers=ADMIN)).json()["check"]
+    assert not check["ok"] and "expired" in check["problems"][0]
+
+    # The setup page shows the webhook details so nobody has to open .env.
+    detail = (await api.get(f"/admin/tenants/{tid}", headers=ADMIN)).json()
+    assert detail["meta_webhook_url"] == "http://agent.test/webhooks/meta" and detail["meta_verify_token"] == "verify-me"

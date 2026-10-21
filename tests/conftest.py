@@ -129,8 +129,23 @@ class GraphFake:
         async def templates(version: str, waba_id: str):
             return {"data": self.templates}
 
+        @self.app.get("/{version}/{node_id}")
+        async def phone_info(version: str, node_id: str, request: Request):
+            if request.headers.get("authorization") == "Bearer expired":
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(status_code=401, content={"error": {"message": "Session has expired", "code": 190}})
+            return {"id": node_id, "display_phone_number": "+91 90000 00000", "verified_name": "Jaipur Linen Co",
+                    "quality_rating": "GREEN", "name_status": "APPROVED", "platform_type": "CLOUD_API"}
+
+        @self.app.post("/{version}/{waba_id}/subscribed_apps")
+        async def subscribe(version: str, waba_id: str):
+            self.subscribed.append(waba_id)
+            return {"success": True}
+
         self.fail_after: int | None = None
         self.templates: list[dict] = []
+        self.subscribed: list[str] = []
 
 
 @pytest.fixture

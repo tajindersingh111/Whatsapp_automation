@@ -4,6 +4,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 from sqlalchemy import delete, func, or_, select
@@ -22,7 +23,7 @@ from app.api.schemas import (
 )
 from app.bot_config import BotConfig, load_config
 from app.config import get_settings
-from app.connectors import REQUIRED_CREDENTIALS
+from app.connectors import REQUIRED_CREDENTIALS, http_client
 from app.db import get_session
 from app.jobs import enqueue
 from app.models import (
@@ -39,11 +40,11 @@ from app.models import (
     WhatsAppAccount,
 )
 from app.pipeline import connector_for, ingest_inbound, respond
-from app.security import decrypt_json, encrypt, encrypt_json, generate_secret, require_admin
+from app.security import decrypt, decrypt_json, encrypt, encrypt_json, generate_secret, require_admin
 from app.services import catalog
 from app.services.conversations import in_service_window
 from app.services.messaging import send_message, sender_for
-from app.whatsapp.client import SimulatedSender, text_message
+from app.whatsapp.client import SimulatedSender, check_connection, text_message
 from app.whatsapp.webhook import InboundMessage
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -115,6 +116,7 @@ async def get_tenant(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_s
         else None,
         "active_products": products,
         "meta_webhook_url": f"{base}/webhooks/meta",
+        "meta_verify_token": get_settings().meta_verify_token,
     }
 
 
@@ -163,7 +165,24 @@ async def connect_whatsapp(tenant_id: uuid.UUID, body: WhatsAppConnect, session:
     if body.access_token:
         account.access_token_enc = encrypt(body.access_token)
     await session.commit()
-    return {"ok": True}
+    return {"ok": True, "check": await _check_whatsapp(account)}
+
+
+async def _check_whatsapp(account: WhatsAppAccount) -> dict | None:
+    if account.phone_number_id.startswith("sandbox"):
+        return None
+    try:
+        return await check_connection(http_client(), get_settings().meta_graph_version, account.phone_number_id, account.waba_id, decrypt(account.access_token_enc))
+    except httpx.HTTPError as exc:
+        return {"ok": False, "phone": None, "subscribed": False, "problems": [f"Could not reach Meta: {exc}"]}
+
+
+@router.post("/tenants/{tenant_id}/whatsapp/check")
+async def check_whatsapp(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
+    if account is None:
+        raise HTTPException(status_code=404, detail="WhatsApp is not connected")
+    return {"check": await _check_whatsapp(account)}
 
 
 @router.delete("/tenants/{tenant_id}/whatsapp")

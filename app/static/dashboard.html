@@ -170,7 +170,13 @@ views.setup = async (el) => {
   el.innerHTML = `
   <div class="card"><h2>${esc(t.name)}</h2>
     <p class="muted">Tenant id: <code>${t.id}</code> · Active products: <b>${t.active_products}</b> · Status: ${t.active ? "active" : "paused"}</p>
-    <p class="muted">Meta webhook URL (same for every brand): <code>${esc(t.meta_webhook_url)}</code></p>
+  </div>
+  <div class="card"><h2>Meta webhook (one time, for your Meta app)</h2>
+    <p class="muted">Meta app → WhatsApp → Configuration → Webhook → Edit. Then subscribe the <b>messages</b> field.</p>
+    <div class="grid">
+      <div><label>Callback URL</label><input readonly value="${esc(t.meta_webhook_url)}" onclick="this.select()"></div>
+      <div><label>Verify token</label><input readonly value="${esc(t.meta_verify_token)}" onclick="this.select()"></div>
+    </div>
   </div>
   <div class="card"><h2>1. WhatsApp number</h2>
     ${t.whatsapp ? `<p>Connected: <b>${esc(t.whatsapp.display_phone || t.whatsapp.phone_number_id)}</b> (phone number id ${esc(t.whatsapp.phone_number_id)})</p>` : `<p class="muted">Not connected. Until then, replies are only simulated (use the Playground).</p>`}
@@ -180,7 +186,8 @@ views.setup = async (el) => {
       <div><label>Display phone</label><input id="wa_phone" placeholder="+91 98xxx xxxxx" value="${esc(t.whatsapp?.display_phone || "")}"></div>
       <div><label>Permanent access token (system user)</label><input id="wa_token" type="password" placeholder="${t.whatsapp ? "•••••• (leave to keep)" : "EAAG…"}"></div>
     </div>
-    <p><button class="primary" id="wa_save">Save WhatsApp</button></p>
+    <p class="row"><button class="primary" id="wa_save">Save &amp; connect WhatsApp</button>${t.whatsapp ? `<button class="secondary" id="wa_check">Check connection</button>` : ""}</p>
+    <div id="wa_result"></div>
   </div>
   <div class="card"><h2>2. Store</h2>
     ${t.store ? `<p>Connected: <b>${esc(t.store.kind)}</b> · ${esc(t.store.base_url)}<br>
@@ -215,8 +222,30 @@ views.setup = async (el) => {
   $("#wa_save", el).onclick = async () => {
     const access_token = $("#wa_token", el).value.trim() || null;
     if (!access_token && !t.whatsapp) return toast("Enter the access token", true);
-    await api(T("/whatsapp"), { method: "PUT", body: { phone_number_id: $("#wa_pnid", el).value.trim(), waba_id: $("#wa_waba", el).value.trim() || null, display_phone: $("#wa_phone", el).value.trim() || null, access_token } });
-    toast("WhatsApp saved"); render();
+    const btn = $("#wa_save", el); btn.disabled = true; btn.textContent = "Connecting…";
+    try {
+      const r = await api(T("/whatsapp"), { method: "PUT", body: { phone_number_id: $("#wa_pnid", el).value.trim(), waba_id: $("#wa_waba", el).value.trim() || null, display_phone: $("#wa_phone", el).value.trim() || null, access_token } });
+      $("#wa_token", el).value = "";
+      showCheck(r.check);
+    } catch (err) { toast(err.message, true); }
+    btn.disabled = false; btn.textContent = "Save & connect WhatsApp";
+  };
+  const showCheck = (c) => {
+    const box = $("#wa_result", el);
+    if (!c) { box.innerHTML = `<p class="muted">Saved (sandbox number: nothing is sent to Meta).</p>`; return; }
+    const ph = c.phone || {};
+    box.innerHTML = `<div class="card" style="margin-top:12px;border-color:${c.ok ? "var(--brand)" : "var(--warn)"}">
+      <h2 style="margin-bottom:6px">${c.ok ? "✅ WhatsApp connected" : "⚠️ Almost there"}</h2>
+      ${c.phone ? `<p>Number <b>${esc(ph.display_phone_number || "")}</b> · name <b>${esc(ph.verified_name || "")}</b>${ph.name_status ? ` (${esc(ph.name_status)})` : ""} · quality ${esc(ph.quality_rating || "-")}</p>` : ""}
+      <p>${c.subscribed ? "✅ App subscribed to this WhatsApp account (customer messages will reach the bot)" : "❌ App not subscribed yet"}</p>
+      ${c.problems.length ? `<ul>${c.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+    </div>`;
+  };
+  const check = $("#wa_check", el);
+  if (check) check.onclick = async () => {
+    check.disabled = true; check.textContent = "Checking…";
+    try { showCheck((await api(T("/whatsapp/check"), { method: "POST" })).check); } catch (err) { toast(err.message, true); }
+    check.disabled = false; check.textContent = "Check connection";
   };
   $("#st_save", el).onclick = async () => {
     const credentials = {};

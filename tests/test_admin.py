@@ -136,3 +136,28 @@ async def test_find_my_numbers_from_token(api, db, http, graph):
 
     bad = await api.post(f"/admin/tenants/{tid}/whatsapp/discover", json={"access_token": "bad-token-123"}, headers=ADMIN)
     assert bad.status_code == 422 and "Invalid OAuth" in bad.json()["detail"]
+
+
+async def test_rename_pause_and_delete_brand(api, db, http):
+    tid = (await api.post("/admin/tenants", json={"name": "Arjan logistics"}, headers=ADMIN)).json()["id"]
+    r = await api.patch(f"/admin/tenants/{tid}", json={"name": "GG Carriers"}, headers=ADMIN)
+    assert r.json()["name"] == "GG Carriers"
+    cfg = (await api.get(f"/admin/tenants/{tid}/config", headers=ADMIN)).json()
+    assert cfg["brand_name"] == "GG Carriers"  # bot greeting follows the rename
+
+    # A separately customised bot name is left alone.
+    cfg["brand_name"] = "GG Carriers Pvt Ltd"
+    await api.put(f"/admin/tenants/{tid}/config", json=cfg, headers=ADMIN)
+    await api.patch(f"/admin/tenants/{tid}", json={"name": "GG"}, headers=ADMIN)
+    assert (await api.get(f"/admin/tenants/{tid}/config", headers=ADMIN)).json()["brand_name"] == "GG Carriers Pvt Ltd"
+
+    assert (await api.patch(f"/admin/tenants/{tid}", json={"active": False}, headers=ADMIN)).json()["active"] is False
+    assert (await api.patch(f"/admin/tenants/{tid}", json={"name": "x"}, headers=ADMIN)).status_code == 422
+
+    await api.post(f"/admin/tenants/{tid}/knowledge", json={"title": "Returns", "content": "7 days"}, headers=ADMIN)
+    bad = await api.request("DELETE", f"/admin/tenants/{tid}", params={"confirm": "wrong"}, headers=ADMIN)
+    assert bad.status_code == 422
+    ok = await api.request("DELETE", f"/admin/tenants/{tid}", params={"confirm": "GG"}, headers=ADMIN)
+    assert ok.status_code == 200
+    assert (await api.get(f"/admin/tenants/{tid}", headers=ADMIN)).status_code == 404
+    assert (await api.get("/admin/tenants", headers=ADMIN)).json() == []

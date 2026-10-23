@@ -975,6 +975,14 @@ views.setup = async (el) => {
     <div class="kpi"><div class="l">Store</div><div class="v" style="font-size:20px">${t.store ? esc(t.store.kind) : "Not connected"}</div><div class="s">${t.active_products} active products</div></div>
     <div class="kpi"><div class="l">Brand id</div><div class="v" style="font-size:13px;font-family:ui-monospace,monospace;word-break:break-all">${t.id}</div><div class="s">${t.active ? "active" : "paused"}</div></div>
   </div>
+  ${card("Brand", "Name shown here and in bot messages to customers.", `
+    <label>Brand name</label>
+    <div class="row" style="flex-wrap:nowrap"><input id="b_name" value="${esc(t.name)}" maxlength="200" style="flex:1"><button class="primary" id="b_save">Save name</button></div>
+    <label class="check" style="margin-top:14px"><input type="checkbox" id="b_active" ${t.active ? "checked" : ""}> Brand active (bot replies to this brand's customers)</label>
+    <details style="margin-top:14px"><summary style="color:var(--danger)">Delete brand</summary>
+      <p class="muted small">Permanently deletes <b>${esc(t.name)}</b> with its inbox, contacts, campaigns, training and WhatsApp connection. This cannot be undone. Type the brand name to confirm.</p>
+      <div class="row" style="flex-wrap:nowrap"><input id="b_confirm" placeholder="${esc(t.name)}" style="flex:1"><button class="secondary danger" id="b_delete">Delete permanently</button></div>
+    </details>`)}
   ${card("1. WhatsApp number", "Paste your permanent system-user token, pick your number, then save. Saving checks the number with Meta and subscribes the app.", `
     <label>Permanent access token</label>
     <div class="row" style="flex-wrap:nowrap"><input id="wa_token" type="password" style="flex:1" placeholder="${t.whatsapp ? "•••••• saved (paste a new one to replace)" : "Paste the token that starts with EAA…"}">
@@ -1003,6 +1011,23 @@ views.setup = async (el) => {
     ${t.store?.kind === "custom" ? `<label class="check" style="margin-top:12px"><input type="checkbox" id="st_rotate"> Issue a new shared secret (the store's WA_AGENT_SECRET must be updated)</label>` : ""}
     <p class="row" style="margin-bottom:0"><button class="primary" id="st_save">Connect store</button>${t.store ? `<button class="secondary" id="st_sync">Sync products now</button>` : ""}</p>
     <div id="st_result"></div>`)}`;
+  $("#b_save", el).onclick = async () => {
+    const name = $("#b_name", el).value.trim();
+    if (name.length < 2) return toast("Brand name is too short", true);
+    try { await api(T(), { method: "PATCH", body: { name } }); toast("Brand renamed"); await loadTenants(); render(); } catch (err) { toast(err.message, true); }
+  };
+  $("#b_active", el).onchange = async (e) => {
+    try { await api(T(), { method: "PATCH", body: { active: e.target.checked } }); toast(e.target.checked ? "Brand active" : "Brand paused: the bot will not reply"); }
+    catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
+  };
+  $("#b_delete", el).onclick = async () => {
+    const confirmName = $("#b_confirm", el).value.trim();
+    if (confirmName !== t.name) return toast(`Type "${t.name}" exactly to delete`, true);
+    try {
+      await api(T(`?confirm=${encodeURIComponent(confirmName)}`), { method: "DELETE" });
+      toast(`${t.name} deleted`); tenantId = null; store.del("wa_tenant"); await loadTenants(); tab = "overview"; store.set("wa_tab", tab); render();
+    } catch (err) { toast(err.message, true); }
+  };
   const kind = $("#st_kind", el);
   if (t.store) kind.value = t.store.kind;
   const credFields = {

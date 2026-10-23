@@ -32,12 +32,14 @@ from app.models import (
     Contact,
     Conversation,
     Correction,
+    Job,
     KnowledgeDoc,
     Message,
     Order,
     Product,
     StoreConnection,
     Tenant,
+    WebhookEvent,
     WhatsAppAccount,
 )
 from app.pipeline import connector_for, ingest_inbound, respond
@@ -125,9 +127,29 @@ async def get_tenant(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_s
 async def update_tenant(tenant_id: uuid.UUID, body: TenantUpdate, session: AsyncSession = Depends(get_session)) -> dict:
     tenant = await _tenant(session, tenant_id)
     if body.name is not None:
-        tenant.name = body.name
+        new_name = body.name.strip()
+        config = dict(tenant.config or {})
+        # Keep the name customers see in bot messages in step, unless it was customised separately.
+        if config.get("brand_name") in (None, "", tenant.name):
+            config["brand_name"] = new_name
+            tenant.config = config
+        tenant.name = new_name
     if body.active is not None:
         tenant.active = body.active
+    await session.commit()
+    return {"ok": True, "name": tenant.name, "active": tenant.active}
+
+
+@router.delete("/tenants/{tenant_id}")
+async def delete_tenant(tenant_id: uuid.UUID, confirm: str = "", session: AsyncSession = Depends(get_session)) -> dict:
+    """Permanently delete a brand and all its data. `confirm` must equal the brand name."""
+    tenant = await _tenant(session, tenant_id)
+    if confirm.strip() != tenant.name:
+        raise HTTPException(status_code=422, detail="Type the brand name exactly to confirm deletion")
+    # Rows without a foreign key to tenants; everything else is removed by ON DELETE CASCADE.
+    await session.execute(delete(Job).where(Job.tenant_id == tenant_id))
+    await session.execute(delete(WebhookEvent).where(WebhookEvent.tenant_id == tenant_id))
+    await session.delete(tenant)
     await session.commit()
     return {"ok": True}
 

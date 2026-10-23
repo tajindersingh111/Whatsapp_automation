@@ -131,12 +131,25 @@ class GraphFake:
 
         @self.app.get("/{version}/{node_id}")
         async def phone_info(version: str, node_id: str, request: Request):
+            if node_id == "debug_token":
+                valid = request.query_params.get("input_token") != "bad-token-123"
+                return {"data": {"is_valid": valid, "granular_scopes": [
+                    {"scope": "whatsapp_business_management", "target_ids": ["777"]},
+                    {"scope": "whatsapp_business_messaging", "target_ids": ["777"]},
+                ]} if valid else {"is_valid": False, "error": {"message": "Invalid OAuth access token"}}}
             if request.headers.get("authorization") == "Bearer expired":
                 from fastapi.responses import JSONResponse
 
                 return JSONResponse(status_code=401, content={"error": {"message": "Session has expired", "code": 190}})
             return {"id": node_id, "display_phone_number": "+91 90000 00000", "verified_name": "Jaipur Linen Co",
                     "quality_rating": "GREEN", "name_status": "APPROVED", "platform_type": "CLOUD_API"}
+
+        @self.app.get("/{version}/{waba_id}/phone_numbers")
+        async def phone_numbers(version: str, waba_id: str):
+            return {"data": [
+                {"id": "1106728389200843", "display_phone_number": "+1 555-051-1635", "verified_name": "Test Number", "quality_rating": "GREEN"},
+                {"id": "5550001", "display_phone_number": "+91 98765 00000", "verified_name": "GG Carriers", "quality_rating": "GREEN"},
+            ]}
 
         @self.app.post("/{version}/{waba_id}/subscribed_apps")
         async def subscribe(version: str, waba_id: str):

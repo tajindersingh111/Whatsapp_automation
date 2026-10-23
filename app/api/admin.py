@@ -19,6 +19,7 @@ from app.api.schemas import (
     StoreConnect,
     TenantCreate,
     TenantUpdate,
+    TokenIn,
     WhatsAppConnect,
 )
 from app.bot_config import BotConfig, load_config
@@ -44,7 +45,7 @@ from app.security import decrypt, decrypt_json, encrypt, encrypt_json, generate_
 from app.services import catalog
 from app.services.conversations import in_service_window
 from app.services.messaging import send_message, sender_for
-from app.whatsapp.client import SimulatedSender, check_connection, text_message
+from app.whatsapp.client import SimulatedSender, WhatsAppError, check_connection, discover_numbers, text_message
 from app.whatsapp.webhook import InboundMessage
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -175,6 +176,19 @@ async def _check_whatsapp(account: WhatsAppAccount) -> dict | None:
         return await check_connection(http_client(), get_settings().meta_graph_version, account.phone_number_id, account.waba_id, decrypt(account.access_token_enc))
     except httpx.HTTPError as exc:
         return {"ok": False, "phone": None, "subscribed": False, "problems": [f"Could not reach Meta: {exc}"]}
+
+
+@router.post("/tenants/{tenant_id}/whatsapp/discover")
+async def discover_whatsapp(tenant_id: uuid.UUID, body: TokenIn, session: AsyncSession = Depends(get_session)) -> dict:
+    """List the WhatsApp numbers a permanent token can use (fills Phone number ID + WABA ID)."""
+    await _tenant(session, tenant_id)
+    try:
+        numbers = await discover_numbers(http_client(), get_settings().meta_graph_version, body.access_token.strip())
+    except WhatsAppError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach Meta: {exc}") from exc
+    return {"numbers": numbers}
 
 
 @router.post("/tenants/{tenant_id}/whatsapp/check")

@@ -180,11 +180,15 @@ views.setup = async (el) => {
   </div>
   <div class="card"><h2>1. WhatsApp number</h2>
     ${t.whatsapp ? `<p>Connected: <b>${esc(t.whatsapp.display_phone || t.whatsapp.phone_number_id)}</b> (phone number id ${esc(t.whatsapp.phone_number_id)})</p>` : `<p class="muted">Not connected. Until then, replies are only simulated (use the Playground).</p>`}
+    <p><label>Step 1 · Permanent access token (system user)</label></p>
+    <div class="row"><input id="wa_token" type="password" style="flex:1" placeholder="${t.whatsapp ? "•••••• saved (paste a new one to replace)" : "Paste the token that starts with EAA…"}">
+      <button class="secondary" id="wa_find">Find my numbers</button></div>
+    <div id="wa_numbers" class="chips list" style="margin:8px 0"></div>
+    <p><label>Step 2 · Number (filled for you when you pick one above)</label></p>
     <div class="grid">
       <div><label>Phone number ID</label><input id="wa_pnid" value="${esc(t.whatsapp?.phone_number_id || "")}"></div>
       <div><label>WABA ID</label><input id="wa_waba" value="${esc(t.whatsapp?.waba_id || "")}"></div>
       <div><label>Display phone</label><input id="wa_phone" placeholder="+91 98xxx xxxxx" value="${esc(t.whatsapp?.display_phone || "")}"></div>
-      <div><label>Permanent access token (system user)</label><input id="wa_token" type="password" placeholder="${t.whatsapp ? "•••••• (leave to keep)" : "EAAG…"}"></div>
     </div>
     <p class="row"><button class="primary" id="wa_save">Save &amp; connect WhatsApp</button>${t.whatsapp ? `<button class="secondary" id="wa_check">Check connection</button>` : ""}</p>
     <div id="wa_result"></div>
@@ -229,6 +233,26 @@ views.setup = async (el) => {
       showCheck(r.check);
     } catch (err) { toast(err.message, true); }
     btn.disabled = false; btn.textContent = "Save & connect WhatsApp";
+  };
+  $("#wa_find", el).onclick = async () => {
+    const access_token = $("#wa_token", el).value.trim();
+    if (!access_token) return toast("Paste the token first", true);
+    const btn = $("#wa_find", el); btn.disabled = true; btn.textContent = "Looking…";
+    const box = $("#wa_numbers", el);
+    try {
+      const { numbers } = await api(T("/whatsapp/discover"), { method: "POST", body: { access_token } });
+      const real = numbers.filter((n) => !n.is_test_number);
+      box.innerHTML = real.length
+        ? `<span class="muted" style="font-size:12px">Pick your number:</span>` + real.map((n, i) => `<button class="chip row-chip" data-pick="${i}"><b>${esc(n.display_phone_number)}</b><span>${esc(n.verified_name || "")} · quality ${esc(n.quality_rating || "-")}</span></button>`).join("")
+        : `<p class="error">No business number found for this token${numbers.length ? " (only Meta's test number)" : ""}. In Business settings → System users → Assign assets, give this user your WhatsApp account, then generate the token again.</p>`;
+      box.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => {
+        const n = real[Number(b.dataset.pick)];
+        $("#wa_pnid", el).value = n.phone_number_id; $("#wa_waba", el).value = n.waba_id; $("#wa_phone", el).value = n.display_phone_number;
+        box.innerHTML = `<p>✅ Selected <b>${esc(n.display_phone_number)}</b>. Now click <b>Save &amp; connect WhatsApp</b>.</p>`;
+      });
+      if (real.length === 1) box.querySelector("[data-pick]").click();
+    } catch (err) { box.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+    btn.disabled = false; btn.textContent = "Find my numbers";
   };
   const showCheck = (c) => {
     const box = $("#wa_result", el);

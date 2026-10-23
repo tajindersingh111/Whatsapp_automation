@@ -123,3 +123,16 @@ async def test_connect_whatsapp_validates_and_subscribes(api, db, http, graph):
     # The setup page shows the webhook details so nobody has to open .env.
     detail = (await api.get(f"/admin/tenants/{tid}", headers=ADMIN)).json()
     assert detail["meta_webhook_url"] == "http://agent.test/webhooks/meta" and detail["meta_verify_token"] == "verify-me"
+
+
+async def test_find_my_numbers_from_token(api, db, http, graph):
+    tid = (await api.post("/admin/tenants", json={"name": "GG CARRIERS"}, headers=ADMIN)).json()["id"]
+    r = await api.post(f"/admin/tenants/{tid}/whatsapp/discover", json={"access_token": "EAAG-good-token"}, headers=ADMIN)
+    numbers = r.json()["numbers"]
+    real = [n for n in numbers if not n["is_test_number"]]
+    assert real == [{"waba_id": "777", "phone_number_id": "5550001", "display_phone_number": "+91 98765 00000",
+                     "verified_name": "GG Carriers", "quality_rating": "GREEN", "is_test_number": False}]
+    assert any(n["is_test_number"] for n in numbers)  # Meta's +1 555 test number is flagged, not offered
+
+    bad = await api.post(f"/admin/tenants/{tid}/whatsapp/discover", json={"access_token": "bad-token-123"}, headers=ADMIN)
+    assert bad.status_code == 422 and "Invalid OAuth" in bad.json()["detail"]

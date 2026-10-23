@@ -23,6 +23,10 @@ class WhatsAppConnect(BaseModel):
     display_phone: str | None = None
 
 
+class TokenIn(BaseModel):
+    access_token: str = Field(min_length=10)
+
+
 class StoreConnect(BaseModel):
     kind: Literal["custom", "shopify", "woocommerce"]
     base_url: str = Field(min_length=8, description="custom: the store's /api/wa-agent URL; shopify: https://x.myshopify.com; woocommerce: site URL")

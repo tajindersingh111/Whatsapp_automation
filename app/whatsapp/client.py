@@ -295,3 +295,39 @@ async def check_connection(http: httpx.AsyncClient, graph_version: str, phone_nu
             result["problems"].append(f"Could not subscribe the app to this WhatsApp account: {err.get('message') or sub.text[:200]}")
     result["ok"] = not result["problems"]
     return result
+
+
+async def discover_numbers(http: httpx.AsyncClient, graph_version: str, access_token: str) -> list[dict]:
+    """Every WhatsApp number this token can use, so nobody has to hunt for IDs in Meta's UI.
+
+    debug_token lists the WhatsApp Business Accounts granted to the token; each account lists its numbers.
+    """
+    base = f"https://graph.facebook.com/{graph_version}"
+    resp = await http.get(f"{base}/debug_token", params={"input_token": access_token, "access_token": access_token}, timeout=20)
+    data = _json(resp).get("data", {})
+    if resp.status_code >= 400 or not data.get("is_valid"):
+        message = (data.get("error") or {}).get("message") or _json(resp).get("error", {}).get("message") or "Token is not valid"
+        raise WhatsAppError(f"Meta rejected the token: {message}", code=190, status=resp.status_code)
+    waba_ids: list[str] = []
+    for scope in data.get("granular_scopes", []):
+        if scope.get("scope") in ("whatsapp_business_management", "whatsapp_business_messaging"):
+            waba_ids += [t for t in scope.get("target_ids", []) if t not in waba_ids]
+    numbers = []
+    for waba_id in waba_ids:
+        r = await http.get(
+            f"{base}/{waba_id}/phone_numbers",
+            params={"fields": "display_phone_number,verified_name,quality_rating,code_verification_status"},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=20,
+        )
+        for n in _json(r).get("data", []):
+            numbers.append({
+                "waba_id": waba_id,
+                "phone_number_id": n.get("id"),
+                "display_phone_number": n.get("display_phone_number"),
+                "verified_name": n.get("verified_name"),
+                "quality_rating": n.get("quality_rating"),
+                # Meta's own test numbers show up as +1 555...; real business numbers do not.
+                "is_test_number": (n.get("display_phone_number") or "").replace(" ", "").startswith("+1555"),
+            })
+    return numbers

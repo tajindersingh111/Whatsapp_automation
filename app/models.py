@@ -134,6 +134,10 @@ class Contact(TimestampMixin, Base):
     lead_stage: Mapped[str] = mapped_column(String(20), default="new")
     lead_note: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str | None] = mapped_column(String(100))  # ctwa ad id, website, store order...
+    # Kept out of bulk campaigns (still gets bot replies and order updates).
+    campaigns_excluded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    excluded_reason: Mapped[str | None] = mapped_column(String(200))
+    excluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Conversation(TimestampMixin, Base):
@@ -277,3 +281,5 @@ class CampaignRecipient(Base):
     wa_message_id: Mapped[str | None] = mapped_column(String(128), index=True)
     error: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set when the customer writes back within REPLY_WINDOW of this campaign message.
+    replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

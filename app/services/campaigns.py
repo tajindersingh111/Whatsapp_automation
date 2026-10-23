@@ -12,9 +12,9 @@ import io
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,7 @@ log = logging.getLogger(__name__)
 MAX_RECIPIENTS = 10_000
 MAX_CSV_BYTES = 5 * 1024 * 1024
 BATCH_SIZE = 50
+REPLY_WINDOW = timedelta(days=7)
 SEND_INTERVAL_SECONDS = 0.1  # ~10 messages/second, well under Cloud API throughput
 
 _PHONE_HEADERS = ("phone", "mobile", "number", "whatsapp", "contact", "phone number", "mobile number", "whatsapp number", "phone_number", "mobile_no", "phone no", "mob")
@@ -128,23 +129,134 @@ def resolve_params(params: list[dict], name: str | None, values: dict) -> list[s
     return out
 
 
-async def add_recipients(session: AsyncSession, campaign: Campaign, rows: list[dict]) -> tuple[int, int]:
-    """Insert recipients; customers who opted out are stored as skipped. Returns (added, opted_out)."""
-    opted_out = set(
-        (await session.scalars(
-            select(Contact.wa_id).where(Contact.tenant_id == campaign.tenant_id, Contact.opted_out.is_(True))
-        )).all()
+@dataclass
+class Skipped:
+    opted_out: int = 0
+    excluded: int = 0
+    never_delivered: int = 0
+    never_replied: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.opted_out + self.excluded + self.never_delivered + self.never_replied
+
+
+@dataclass
+class Engagement:
+    """One customer's history across all campaigns of a brand."""
+
+    attempts: int = 0  # messages we tried to send
+    delivered: int = 0  # reached the phone (2 grey ticks or better)
+    read: int = 0  # blue ticks (only if the customer has read receipts on)
+    replied: int = 0  # customer wrote back after the message
+    failed: int = 0  # Meta could not deliver at all
+    last_sent_at: datetime | None = None
+
+    @property
+    def segment(self) -> str:
+        if self.replied:
+            return "replied"
+        if self.read:
+            return "read_no_reply"
+        if self.delivered:
+            return "delivered_unread"
+        if self.attempts and self.failed == self.attempts:
+            return "failed"
+        if self.attempts:
+            return "not_delivered"
+        return "none"
+
+
+SEGMENTS = {
+    "replied": "Replied",
+    "read_no_reply": "Seen, no reply",
+    "delivered_unread": "Delivered, not seen",
+    "not_delivered": "Single tick (not delivered)",
+    "failed": "Failed",
+}
+
+# Auto-skip rules applied when a new campaign is created.
+NEVER_DELIVERED_AFTER = 2  # 2+ campaign messages, none ever reached the phone
+NEVER_REPLIED_AFTER = 3  # 3+ campaign messages delivered, never a reply
+
+
+async def engagement_by_phone(session: AsyncSession, tenant_id, phones: list[str] | None = None) -> dict[str, Engagement]:
+    r = CampaignRecipient
+    attempted = r.status.in_(["sent", "delivered", "read", "failed"])
+    stmt = (
+        select(
+            r.phone,
+            func.count().filter(attempted),
+            func.count().filter(r.status.in_(["delivered", "read"]) | r.replied_at.is_not(None)),
+            func.count().filter((r.status == "read") | r.replied_at.is_not(None)),
+            func.count().filter(r.replied_at.is_not(None)),
+            func.count().filter(r.status == "failed"),
+            func.max(r.sent_at),
+        )
+        .where(r.tenant_id == tenant_id)
+        .group_by(r.phone)
     )
-    skipped = 0
+    if phones is not None:
+        stmt = stmt.where(r.phone.in_(phones))
+    return {
+        phone: Engagement(attempts=a, delivered=d, read=rd, replied=rp, failed=f, last_sent_at=last)
+        for phone, a, d, rd, rp, f, last in (await session.execute(stmt)).all()
+    }
+
+
+async def mark_replied(session: AsyncSession, tenant_id, phone: str, at: datetime) -> None:
+    """A customer message counts as a reply to campaign messages sent to them in the last 7 days."""
+    r = CampaignRecipient
+    await session.execute(
+        update(r)
+        .where(
+            r.tenant_id == tenant_id, r.phone == phone, r.replied_at.is_(None),
+            r.status.in_(["sent", "delivered", "read"]), r.sent_at >= at - REPLY_WINDOW, r.sent_at <= at,
+        )
+        .values(replied_at=at, status="read")
+    )
+
+
+async def add_recipients(
+    session: AsyncSession, campaign: Campaign, rows: list[dict], *, skip_never_delivered: bool = True, skip_never_replied: bool = False
+) -> tuple[int, Skipped]:
+    """Insert recipients. Opted-out, excluded and (optionally) unengaged customers are stored as skipped."""
+    phones = [r["phone"] for r in rows]
+    contacts = {
+        c.wa_id: c for c in (await session.scalars(
+            select(Contact).where(
+                Contact.tenant_id == campaign.tenant_id, Contact.wa_id.in_(phones),
+                Contact.opted_out.is_(True) | Contact.campaigns_excluded.is_(True),
+            )
+        )).all()
+    }
+    history = await engagement_by_phone(session, campaign.tenant_id, phones) if (skip_never_delivered or skip_never_replied) else {}
+    skipped = Skipped()
+
+    def reason(phone: str) -> str | None:
+        c = contacts.get(phone)
+        if c is not None and c.opted_out:
+            skipped.opted_out += 1
+            return "customer opted out (STOP)"
+        if c is not None and c.campaigns_excluded:
+            skipped.excluded += 1
+            return "excluded from campaigns" + (f": {c.excluded_reason}" if c.excluded_reason else "")
+        h = history.get(phone)
+        if h and skip_never_delivered and h.attempts >= NEVER_DELIVERED_AFTER and h.delivered == 0:
+            skipped.never_delivered += 1
+            return f"auto-skipped: last {h.attempts} campaign messages were never delivered"
+        if h and skip_never_replied and h.delivered >= NEVER_REPLIED_AFTER and h.replied == 0:
+            skipped.never_replied += 1
+            return f"auto-skipped: {h.delivered} campaign messages delivered, never replied"
+        return None
+
     for start in range(0, len(rows), 1000):
-        chunk = rows[start:start + 1000]
         values = []
-        for r in chunk:
-            is_out = r["phone"] in opted_out
-            skipped += is_out
+        for r in rows[start:start + 1000]:
+            why = reason(r["phone"])
             values.append({
                 "campaign_id": campaign.id, "tenant_id": campaign.tenant_id, "phone": r["phone"], "name": r["name"],
-                "vars": r["vars"], "status": "skipped" if is_out else "pending", "error": "customer opted out (STOP)" if is_out else None,
+                "vars": r["vars"], "status": "skipped" if why else "pending", "error": why,
             })
         await session.execute(insert(CampaignRecipient).values(values).on_conflict_do_nothing(index_elements=["campaign_id", "phone"]))
     campaign.total = await session.scalar(
@@ -189,8 +301,8 @@ async def send_batch(session: AsyncSession, sender: Sender, tenant: Tenant, camp
     )).all()
     for r in recipients:
         contact = await session.scalar(select(Contact).where(Contact.tenant_id == tenant.id, Contact.wa_id == r.phone))
-        if contact is not None and contact.opted_out:
-            r.status, r.error = "skipped", "customer opted out (STOP)"
+        if contact is not None and (contact.opted_out or contact.campaigns_excluded):
+            r.status, r.error = "skipped", "customer opted out (STOP)" if contact.opted_out else "excluded from campaigns"
             result.skipped += 1
             await session.commit()
             continue
@@ -227,4 +339,8 @@ async def counts(session: AsyncSession, campaign_id: int) -> dict[str, int]:
     )).all()
     out = {s: 0 for s in ("pending", "sent", "delivered", "read", "failed", "skipped")}
     out.update({status: n for status, n in rows})
+    out["replied"] = await session.scalar(
+        select(func.count()).select_from(CampaignRecipient)
+        .where(CampaignRecipient.campaign_id == campaign_id, CampaignRecipient.replied_at.is_not(None))
+    ) or 0
     return out

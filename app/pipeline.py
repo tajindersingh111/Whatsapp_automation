@@ -120,6 +120,8 @@ async def ingest_inbound(session: AsyncSession, tenant: Tenant, m: InboundMessag
         wa_message_id=m.wa_message_id or None,
         created_at=m.timestamp,
     )
+    if not is_playground:
+        await campaign_service.mark_replied(session, tenant.id, contact.wa_id, m.timestamp)
     return contact, conv, msg
 
 

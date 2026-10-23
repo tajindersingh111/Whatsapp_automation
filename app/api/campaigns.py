@@ -84,6 +84,8 @@ async def create_campaign(
     template_category: str | None = Form(None, max_length=30),
     params: str = Form("[]"),
     header_image_url: str | None = Form(None, max_length=1000),
+    skip_never_delivered: bool = Form(True),
+    skip_never_replied: bool = Form(False),
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -107,7 +109,9 @@ async def create_campaign(
     )
     session.add(campaign)
     await session.flush()
-    added, opted_out = await svc.add_recipients(session, campaign, parsed.rows)
+    added, skipped = await svc.add_recipients(
+        session, campaign, parsed.rows, skip_never_delivered=skip_never_delivered, skip_never_replied=skip_never_replied
+    )
     await session.commit()
     preview = [
         {"phone": r["phone"], "name": r["name"], "params": svc.resolve_params(specs, r["name"], r["vars"])} for r in parsed.rows[:5]
@@ -116,7 +120,9 @@ async def create_campaign(
         **await _view(session, campaign),
         "columns": parsed.columns,
         "valid": added,
-        "opted_out": opted_out,
+        "opted_out": skipped.opted_out,
+        "skipped": {"opted_out": skipped.opted_out, "excluded": skipped.excluded, "never_delivered": skipped.never_delivered,
+                    "never_replied": skipped.never_replied, "total": skipped.total},
         "duplicates": parsed.duplicates,
         "invalid": len(parsed.invalid),
         "invalid_samples": parsed.invalid[:20],

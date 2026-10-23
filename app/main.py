@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
 
 import app.pipeline  # noqa: F401 - registers job handlers
-from app.api import admin, campaigns, webhooks
+from app.api import admin, audience, campaigns, webhooks
 from app.config import get_settings
 from app.connectors import close_http_client
 from app.db import dispose_engine, session_factory
@@ -41,6 +41,7 @@ app = FastAPI(title="WhatsApp Sales Agent", version="0.1.0", lifespan=lifespan)
 app.include_router(webhooks.router)
 app.include_router(admin.router)
 app.include_router(campaigns.router)
+app.include_router(audience.router)
 
 
 @app.get("/health")

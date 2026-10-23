@@ -14,6 +14,7 @@ What it does for each brand:
 | **Order tracking** | "Mera order kahan hai?" is answered from the store. The bot only shows orders that belong to that customer's number. |
 | **Follow-ups** | A lead who goes quiet gets one polite AI follow-up inside the 24h window. |
 | **Bulk messages** | Upload a CSV of opted-in customers, pick an approved template, fill its variables from CSV columns, send yourself a test, then send to everyone. Duplicates, invalid numbers and customers who replied STOP are removed. Sending is throttled, pauses on Meta rate limits without failing anyone, and tracks sent → delivered → read. Replies land in the inbox and the bot answers them. |
+| **Audience console** | Every customer's campaign history as WhatsApp ticks: single tick (never delivered), delivered, seen, replied, failed. One click excludes dead numbers from future campaigns, new campaigns auto-skip numbers that never got delivered, and the list exports to CSV. |
 | **Human handoff** | Complaints, refunds and "talk to a person" pause the bot for that chat. The team replies from the inbox. |
 | **Per-brand training** | Each brand has its own personality, rules, offers, knowledge docs and approved answers ("Teach a better answer" in the inbox). There is no fine-tuning: the brand brain goes into a cached system prompt. |
 | **Billing data** | Claude token usage is logged per brand, so AI cost can be billed to the client with a margin. |

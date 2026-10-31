@@ -232,7 +232,11 @@ def describe(message: dict) -> str:
 
 
 async def list_templates(http: httpx.AsyncClient, graph_version: str, waba_id: str, access_token: str) -> list[dict]:
-    """Approved message templates of a WhatsApp Business Account, simplified for the dashboard."""
+    """Message templates of a WhatsApp Business Account, simplified for the dashboard.
+
+    Returns every status (not just APPROVED) with a `status` field, so a template still in
+    review shows up and the user isn't confused about where it went.
+    """
     url = f"https://graph.facebook.com/{graph_version}/{waba_id}/message_templates"
     params = {"fields": "name,language,status,category,components", "limit": 200}
     resp = await http.get(url, params=params, headers={"Authorization": f"Bearer {access_token}"}, timeout=20)
@@ -242,8 +246,6 @@ async def list_templates(http: httpx.AsyncClient, graph_version: str, waba_id: s
         raise WhatsAppError(f"Meta API {resp.status_code}: {err.get('message') or resp.text[:200]}", code=err.get("code"), status=resp.status_code)
     out = []
     for t in data.get("data", []):
-        if t.get("status") != "APPROVED":
-            continue
         body = next((c.get("text", "") for c in t.get("components", []) if c.get("type") == "BODY"), "")
         header = next((c for c in t.get("components", []) if c.get("type") == "HEADER"), {})
         buttons = next((c.get("buttons", []) for c in t.get("components", []) if c.get("type") == "BUTTONS"), [])
@@ -251,12 +253,15 @@ async def list_templates(http: httpx.AsyncClient, graph_version: str, waba_id: s
             "name": t["name"],
             "language": t.get("language", "en"),
             "category": t.get("category"),
+            "status": t.get("status"),  # APPROVED | PENDING | REJECTED | PAUSED | ...
+            "approved": t.get("status") == "APPROVED",
             "body": body,
             "param_count": len(set(re.findall(r"\{\{(\d+)\}\}", body))),
             "header": header.get("format"),  # TEXT | IMAGE | VIDEO | DOCUMENT | None
             "buttons": [b.get("text") for b in buttons],
         })
-    return sorted(out, key=lambda t: (t["name"], t["language"]))
+    # Approved first, then by name.
+    return sorted(out, key=lambda t: (not t["approved"], t["name"], t["language"]))
 
 
 async def check_connection(http: httpx.AsyncClient, graph_version: str, phone_number_id: str, waba_id: str | None, access_token: str) -> dict:

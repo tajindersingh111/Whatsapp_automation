@@ -149,9 +149,12 @@ async def test_bad_inputs_and_templates(api, tenant, db, graph):
          "components": [{"type": "HEADER", "format": "IMAGE"}, {"type": "BODY", "text": "Hi {{1}}, use {{2}} for 20% off. {{1}}, hurry!"}]},
         {"name": "draft_one", "language": "en", "status": "PENDING", "components": []},
     ]
-    templates = (await api.get(f"/admin/tenants/{tenant.id}/templates", headers=ADMIN)).json()["templates"]
-    assert templates == [{"name": "diwali_offer", "language": "en", "category": "MARKETING",
-                          "body": "Hi {{1}}, use {{2}} for 20% off. {{1}}, hurry!", "param_count": 2, "header": "IMAGE", "buttons": []}]
+    body = (await api.get(f"/admin/tenants/{tenant.id}/templates", headers=ADMIN)).json()
+    # Pending templates are listed too (so the user isn't confused), approved first.
+    assert [(t["name"], t["status"], t["approved"]) for t in body["templates"]] == [("diwali_offer", "APPROVED", True), ("draft_one", "PENDING", False)]
+    assert body["approved_count"] == 1 and body["pending_count"] == 1
+    approved = body["templates"][0]
+    assert approved["param_count"] == 2 and approved["header"] == "IMAGE" and approved["category"] == "MARKETING"
 
     # Image header templates carry the image link.
     cid = (await create(api, tenant.id, header_image_url="https://cdn.example.com/diwali.jpg")).json()["id"]

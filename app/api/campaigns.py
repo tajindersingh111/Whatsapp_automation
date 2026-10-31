@@ -66,7 +66,15 @@ async def templates(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_se
         items = await list_templates(http_client(), get_settings().meta_graph_version, account.waba_id, decrypt(account.access_token_enc))
     except WhatsAppError as exc:
         return {"templates": [], "note": f"Could not load templates from Meta: {exc}"}
-    return {"templates": items, "note": None if items else "No approved templates yet. Create one in WhatsApp Manager → Message templates."}
+    approved = [t for t in items if t["approved"]]
+    pending = [t for t in items if not t["approved"]]
+    if not items:
+        note = "No templates found on this WhatsApp account. Create one in WhatsApp Manager → Message templates, or check you created it under this number's WhatsApp account."
+    elif not approved:
+        note = "Your templates are still being reviewed by Meta. They become usable once their status is Approved."
+    else:
+        note = None
+    return {"templates": items, "approved_count": len(approved), "pending_count": len(pending), "note": note}
 
 
 @router.get("/campaigns")

@@ -699,9 +699,10 @@ async function campaignForm(el) {
     <form id="cp_form" class="steps">
       <p><label>Campaign name</label><input name="name" required minlength="2" placeholder="e.g. Diwali sale 2026"></p>
       <p><label>Template (approved in WhatsApp Manager)</label>
-        <select id="cp_tpl">${templates.map((t, i) => `<option value="${i}">${esc(t.name)} · ${esc(t.language)} · ${esc(t.category || "")}</option>`).join("")}
+        <select id="cp_tpl">${templates.map((t, i) => `<option value="${i}">${t.approved ? "" : "⏳ "}${esc(t.name)} · ${esc(t.language)} · ${esc(t.category || "")}${t.approved ? "" : " — " + esc(t.status || "not approved")}</option>`).join("")}
         <option value="manual">Type the template name myself…</option></select></p>
-      ${note ? `<p class="muted small">${esc(note)}</p>` : ""}
+      ${note ? `<div class="callout ${note.includes("still being reviewed") ? "" : "info"}" style="margin:8px 0">${esc(note)}</div>` : ""}
+      <p id="cp_status" class="muted small"></p>
       <div id="cp_manual" class="grid" style="display:none">
         <div><label>Template name</label><input id="cp_mname" placeholder="diwali_offer"></div>
         <div><label>Language code</label><input id="cp_mlang" value="en"></div>
@@ -740,6 +741,9 @@ async function campaignForm(el) {
     pv.style.display = t?.body ? "" : "none";
     pv.textContent = t?.body || "";
     $("#cp_imgwrap", el).style.display = t?.header === "IMAGE" ? "" : "none";
+    const st = $("#cp_status", el);
+    if (t && t.status && !t.approved) st.innerHTML = `<span class="error">⏳ This template is <b>${esc(t.status)}</b>, not approved yet. Meta will reject sends until it's Approved.</span>`;
+    else st.textContent = "";
     const n = t?.param_count || 0;
     const nameCol = columns.find((c) => /name/i.test(c));
     $("#cp_params", el).innerHTML = n ? `<label>Fill the variables</label>` + Array.from({ length: n }, (_, i) => `

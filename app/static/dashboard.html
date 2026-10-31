@@ -693,7 +693,8 @@ views.campaigns = async (el) => {
 };
 
 async function campaignForm(el) {
-  const { templates, note } = await api(T("/templates"));
+  const { templates, note, other_accounts: others = [] } = await api(T("/templates?scan=1"));
+  const elsewhere = others.filter((a) => a.templates.length);
   el.innerHTML = `<div class="card" style="max-width:860px">
     <div class="card-h"><div><h2>New campaign</h2><p class="muted small">Step by step: template → customer list → variables → check.</p></div><span class="spacer"></span><button class="secondary" id="cp_back">← Back</button></div>
     <form id="cp_form" class="steps">
@@ -702,6 +703,11 @@ async function campaignForm(el) {
         <select id="cp_tpl">${templates.map((t, i) => `<option value="${i}">${t.approved ? "" : "⏳ "}${esc(t.name)} · ${esc(t.language)} · ${esc(t.category || "")}${t.approved ? "" : " — " + esc(t.status || "not approved")}</option>`).join("")}
         <option value="manual">Type the template name myself…</option></select></p>
       ${note ? `<div class="callout ${note.includes("still being reviewed") ? "" : "info"}" style="margin:8px 0">${esc(note)}</div>` : ""}
+      ${elsewhere.length ? `<div class="callout" style="margin:8px 0;flex-direction:column;align-items:stretch">
+        <b>Templates found on your other WhatsApp accounts</b>
+        <span class="small">A template only works from numbers of the account it was created in. Create it again under this brand's account (WhatsApp Manager → select this number's account → Create template).</span>
+        ${elsewhere.map((a) => `<span class="small"><b>${a.phones.map(esc).join(", ") || esc(a.waba_id)}</b> (account ${esc(a.waba_id)}): ${a.templates.map((t) => `${esc(t.name)} <span class="muted">(${esc(t.status)})</span>`).join(", ")}</span>`).join("")}
+      </div>` : ""}
       <p id="cp_status" class="muted small"></p>
       <div id="cp_manual" class="grid" style="display:none">
         <div><label>Template name</label><input id="cp_mname" placeholder="diwali_offer"></div>

@@ -4,6 +4,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
@@ -18,7 +19,7 @@ from app.models import Campaign, CampaignRecipient, Tenant, WhatsAppAccount
 from app.security import decrypt, require_admin
 from app.services import campaigns as svc
 from app.services.messaging import tenant_sender
-from app.whatsapp.client import WhatsAppError, list_templates
+from app.whatsapp.client import WhatsAppError, discover_numbers, list_templates
 
 router = APIRouter(prefix="/admin/tenants/{tenant_id}", tags=["campaigns"], dependencies=[Depends(require_admin)])
 
@@ -57,7 +58,7 @@ async def _view(session: AsyncSession, c: Campaign) -> dict:
 
 
 @router.get("/templates")
-async def templates(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+async def templates(tenant_id: uuid.UUID, scan: bool = False, session: AsyncSession = Depends(get_session)) -> dict:
     await _tenant(session, tenant_id)
     account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
     if account is None or account.phone_number_id.startswith("sandbox") or not account.waba_id:
@@ -74,7 +75,32 @@ async def templates(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_se
         note = "Your templates are still being reviewed by Meta. They become usable once their status is Approved."
     else:
         note = None
-    return {"templates": items, "approved_count": len(approved), "pending_count": len(pending), "note": note}
+    result = {"templates": items, "approved_count": len(approved), "pending_count": len(pending), "note": note}
+    if scan:
+        result["other_accounts"] = await _templates_elsewhere(account)
+    return result
+
+
+async def _templates_elsewhere(account: WhatsAppAccount) -> list[dict]:
+    """Templates on the token's OTHER WhatsApp accounts. A template only works from numbers of the
+    account it was created in, so this explains 'I created it but it is not listed'."""
+    graph, token, http = get_settings().meta_graph_version, decrypt(account.access_token_enc), http_client()
+    try:
+        numbers = await discover_numbers(http, graph, token)
+    except (WhatsAppError, httpx.HTTPError):
+        return []
+    accounts: dict[str, list[str]] = {}
+    for n in numbers:
+        if n["waba_id"] != account.waba_id:
+            accounts.setdefault(n["waba_id"], []).append(n["display_phone_number"])
+    out = []
+    for waba_id, phones in accounts.items():
+        try:
+            found = await list_templates(http, graph, waba_id, token)
+        except (WhatsAppError, httpx.HTTPError):
+            continue
+        out.append({"waba_id": waba_id, "phones": phones, "templates": [{"name": t["name"], "language": t["language"], "status": t["status"], "category": t["category"]} for t in found]})
+    return out
 
 
 @router.get("/campaigns")

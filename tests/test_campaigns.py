@@ -161,3 +161,17 @@ async def test_bad_inputs_and_templates(api, tenant, db, graph):
     await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/test", json={"phone": "9999911111"}, headers=ADMIN)
     assert graph.sent[-1]["template"]["components"][0] == {"type": "header", "parameters": [{"type": "image", "image": {"link": "https://cdn.example.com/diwali.jpg"}}]}
     assert (await db.scalar(select(Campaign).where(Campaign.id == cid))).status == "draft"
+
+
+async def test_templates_on_other_accounts_are_reported(api, tenant, db, graph):
+    account = await db.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant.id))
+    account.waba_id = "999"  # not the account the fake Meta lists numbers under ("777")
+    await db.commit()
+    graph.templates = [{"name": "introducing", "language": "en", "status": "APPROVED", "category": "MARKETING",
+                        "components": [{"type": "BODY", "text": "Hello"}]}]
+    body = (await api.get(f"/admin/tenants/{tenant.id}/templates?scan=1", headers=ADMIN)).json()
+    others = body["other_accounts"]
+    assert [o["waba_id"] for o in others] == ["777"] and "+91 98765 00000" in others[0]["phones"]
+    assert others[0]["templates"][0]["name"] == "introducing"
+    # Without scan=1 nothing extra is fetched.
+    assert "other_accounts" not in (await api.get(f"/admin/tenants/{tenant.id}/templates", headers=ADMIN)).json()

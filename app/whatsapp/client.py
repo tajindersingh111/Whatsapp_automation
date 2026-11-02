@@ -280,6 +280,7 @@ async def list_templates(http: httpx.AsyncClient, graph_version: str, waba_id: s
             "body": body,
             "param_count": len(set(re.findall(r"\{\{(\d+)\}\}", body))),
             "header": header.get("format"),  # TEXT | IMAGE | VIDEO | DOCUMENT | None
+            "header_example": ((header.get("example") or {}).get("header_handle") or [None])[0],  # sample image given at creation
             "buttons": [b.get("text") for b in buttons],
         })
     # Approved first, then by name.

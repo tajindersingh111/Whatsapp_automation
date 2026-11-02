@@ -84,7 +84,7 @@
   label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
   input, textarea, select { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font: inherit; transition: border-color .15s, box-shadow .15s; }
   input:focus, textarea:focus, select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
-  input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); padding: 0; }
+  input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-color: var(--primary); padding: 0; flex: none; }
   textarea { min-height: 90px; resize: vertical; }
   .check { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; font-weight: 500; color: var(--ink); margin: 0; cursor: pointer; }
   .check input { margin-top: 2px; flex: none; }
@@ -720,8 +720,23 @@ async function campaignForm(el) {
         <input type="file" id="cp_file" accept=".csv,text/csv" required></p>
       <p class="muted small" id="cp_cols"></p>
       <div id="cp_params"></div>
-      <p id="cp_imgwrap" style="display:none"><label id="cp_imglabel">Header image link (this template has an image header)</label><input id="cp_img" placeholder="https://yourwebsite.com/offer.jpg">
-        <span class="muted small">Must be a public, direct https link to a .jpg or .png (max 5 MB), not a Google Drive, Instagram or web page link. Meta downloads it from this link.</span></p>
+      <div id="cp_imgwrap" style="display:none;margin:6px 0 14px">
+        <label id="cp_imglabel">Header image</label>
+        <div class="row" style="gap:6px 20px">
+          <label class="check" id="cp_opt_template"><input type="radio" name="imgsrc" value="template"> Use the template's own image <span class="pill ok">easiest</span></label>
+          <label class="check"><input type="radio" name="imgsrc" value="upload"> Upload an image</label>
+          <label class="check"><input type="radio" name="imgsrc" value="url"> Paste a link</label>
+        </div>
+        <div id="cp_img_upload" style="display:none;margin-top:10px">
+          <input type="file" id="cp_img_file" accept="image/jpeg,image/png">
+          <img id="cp_img_prev" alt="" style="display:none;max-width:200px;border-radius:10px;margin-top:8px;border:1px solid var(--line)">
+          <span class="muted small" style="display:block">JPEG or PNG, up to 5 MB. It is sent to WhatsApp directly, no website needed.</span>
+        </div>
+        <div id="cp_img_url" style="display:none;margin-top:10px">
+          <input id="cp_img" placeholder="https://yourwebsite.com/offer.jpg">
+          <span class="muted small">A public, direct https link to a .jpg or .png (not Google Drive, Instagram or a web page).</span>
+        </div>
+      </div>
       <div class="callout info" style="flex-direction:column;align-items:stretch;gap:8px">
         <b>Save money automatically</b>
         <label class="check"><input type="checkbox" id="cp_skip_dead" checked> Skip numbers whose last 2+ campaign messages never got delivered (single tick)</label>
@@ -741,6 +756,17 @@ async function campaignForm(el) {
       param_count: Number($("#cp_mcount", el).value) || 0, category: $("#cp_mcat", el).value, header: null, body: "" };
     return templates[Number(v)];
   };
+  const showImgSource = () => {
+    const v = el.querySelector('input[name="imgsrc"]:checked')?.value;
+    $("#cp_img_upload", el).style.display = v === "upload" ? "" : "none";
+    $("#cp_img_url", el).style.display = v === "url" ? "" : "none";
+  };
+  el.querySelectorAll('input[name="imgsrc"]').forEach((r) => r.onchange = showImgSource);
+  $("#cp_img_file", el).onchange = (e) => {
+    const f = e.target.files[0], prev = $("#cp_img_prev", el);
+    if (!f) { prev.style.display = "none"; return; }
+    prev.src = URL.createObjectURL(f); prev.style.display = "";
+  };
   const drawParams = () => {
     const t = current();
     $("#cp_manual", el).style.display = $("#cp_tpl", el).value === "manual" ? "" : "none";
@@ -750,8 +776,14 @@ async function campaignForm(el) {
     const manual = $("#cp_tpl", el).value === "manual";
     const needsImage = t?.header === "IMAGE";
     $("#cp_imgwrap", el).style.display = needsImage || manual ? "" : "none";
-    $("#cp_img", el).required = needsImage;
-    $("#cp_imglabel", el).textContent = needsImage ? "Header image link (required: this template has an image header)" : "Header image link (only if your template has an image header)";
+    $("#cp_imglabel", el).textContent = needsImage ? "Header image (required: this template has an image header)" : "Header image (only if your template has an image header)";
+    const hasSample = !!t?.header_example;
+    $("#cp_opt_template", el).style.display = hasSample ? "" : "none";
+    const chosen = el.querySelector('input[name="imgsrc"]:checked')?.value;
+    if (!chosen || (chosen === "template" && !hasSample)) {
+      el.querySelector(`input[name="imgsrc"][value="${hasSample ? "template" : "upload"}"]`).checked = true;
+    }
+    showImgSource();
     const st = $("#cp_status", el);
     if (t && t.status && !t.approved) st.innerHTML = `<span class="error">⏳ This template is <b>${esc(t.status)}</b>, not approved yet. Meta will reject sends until it's Approved.</span>`;
     else st.textContent = "";
@@ -794,10 +826,23 @@ async function campaignForm(el) {
     fd.append("params", JSON.stringify(params));
     fd.append("skip_never_delivered", $("#cp_skip_dead", el).checked ? "true" : "false");
     fd.append("skip_never_replied", $("#cp_skip_quiet", el).checked ? "true" : "false");
-    if ($("#cp_img", el).value.trim()) fd.append("header_image_url", $("#cp_img", el).value.trim());
     fd.append("file", $("#cp_file", el).files[0]);
     const btn = $("#cp_submit", el); btn.disabled = true; btn.textContent = "Checking…";
     try {
+      const wrapShown = $("#cp_imgwrap", el).style.display !== "none";
+      const source = el.querySelector('input[name="imgsrc"]:checked')?.value;
+      if (wrapShown && source === "template") fd.append("use_template_image", "true");
+      else if (wrapShown && source === "url" && $("#cp_img", el).value.trim()) fd.append("header_image_url", $("#cp_img", el).value.trim());
+      else if (wrapShown && source === "upload") {
+        const img = $("#cp_img_file", el).files[0];
+        if (img) {
+          btn.textContent = "Uploading image…";
+          const up = new FormData(); up.append("file", img);
+          const m = await apiForm(T("/campaigns/media"), up);
+          fd.append("header_media_id", m.media_id);
+          btn.textContent = "Checking…";
+        } else if (current()?.header === "IMAGE") throw new Error("Choose an image to upload");
+      }
       const r = await apiForm(T("/campaigns"), fd);
       const s = r.skipped || {};
       const rate = RATE[r.template_category] ?? RATE.MARKETING;
@@ -835,7 +880,8 @@ async function campaignDetail(el, id) {
   ${c.status === "paused" ? `<div class="callout" style="align-items:stretch;flex-direction:column">
     <div><b>Campaign paused: there is a problem with the template.</b><br><span>${esc(c.pause_reason || "")}</span><br>
       <span class="muted small">Nobody was marked as failed: the ${k.pending} waiting customer(s) are still in the queue. Fix it and resume.</span></div>
-    ${c.template_name ? `<div class="row" style="flex-wrap:nowrap"><input id="cd_img" placeholder="New image link (https://…/offer.jpg)" value="${esc(c.header_image_url || "")}" style="flex:1"><button class="accent" id="cd_resume">Resume sending</button></div>` : ""}
+    <div class="row" style="flex-wrap:nowrap"><input id="cd_img" placeholder="New image link (https://…/offer.jpg)" value="${esc(c.header_image_url || "")}" style="flex:1"><button class="accent" id="cd_resume">Resume with this link</button></div>
+    <div class="row"><button class="secondary" id="cd_resume_tpl">Resume with the template's own image</button><span class="muted small">Uses the sample image saved in the template.</span></div>
   </div>` : ""}
   <div class="kpis">
     ${kpi("Waiting", k.pending, "in queue")}
@@ -873,6 +919,12 @@ async function campaignDetail(el, id) {
     resume.disabled = true;
     try { await api(T(`/campaigns/${id}/resume`), { method: "POST", body: { header_image_url: $("#cd_img", el).value.trim() || null } }); toast("Resumed"); render(); }
     catch (err) { toast(err.message, true); resume.disabled = false; }
+  };
+  const resumeTpl = $("#cd_resume_tpl", el);
+  if (resumeTpl) resumeTpl.onclick = async () => {
+    resumeTpl.disabled = true;
+    try { await api(T(`/campaigns/${id}/resume`), { method: "POST", body: { use_template_image: true } }); toast("Resumed with the template's image"); render(); }
+    catch (err) { toast(err.message, true); resumeTpl.disabled = false; }
   };
   const cancelBtn = $("#cd_cancel", el);
   if (cancelBtn) cancelBtn.onclick = async () => { await api(T(`/campaigns/${id}/cancel`), { method: "POST" }); render(); };

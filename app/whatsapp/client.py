@@ -198,9 +198,12 @@ def template_message(
     body_params: list[str] | None = None,
     quick_reply_payloads: list[str] | None = None,
     header_image_url: str | None = None,
+    header_media_id: str | None = None,
 ) -> dict:
     components: list[dict] = []
-    if header_image_url:
+    if header_media_id:
+        components.append({"type": "header", "parameters": [{"type": "image", "image": {"id": header_media_id}}]})
+    elif header_image_url:
         components.append({"type": "header", "parameters": [{"type": "image", "image": {"link": header_image_url}}]})
     if body_params:
         components.append(
@@ -385,3 +388,28 @@ async def check_image_url(http: httpx.AsyncClient, url: str) -> str | None:
     if size > MAX_IMAGE_BYTES:
         return "The image is larger than 5 MB. Use a smaller image."
     return None
+
+
+def sniff_image(data: bytes) -> str | None:
+    """MIME type from the file's first bytes (JPEG/PNG only: what WhatsApp template headers accept)."""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    return None
+
+
+async def upload_media(http: httpx.AsyncClient, graph_version: str, phone_number_id: str, access_token: str, data: bytes, mime: str, filename: str) -> str:
+    """Upload an image to Meta's media servers for this number and return its media id."""
+    resp = await http.post(
+        f"https://graph.facebook.com/{graph_version}/{phone_number_id}/media",
+        headers={"Authorization": f"Bearer {access_token}"},
+        data={"messaging_product": "whatsapp", "type": mime},
+        files={"file": (filename, data, mime)},
+        timeout=60,
+    )
+    body = _json(resp)
+    if resp.status_code >= 400 or not body.get("id"):
+        err = body.get("error", {}) if isinstance(body, dict) else {}
+        raise WhatsAppError(f"Meta media upload failed ({resp.status_code}): {err.get('message') or resp.text[:200]}", code=err.get("code"), status=resp.status_code)
+    return str(body["id"])

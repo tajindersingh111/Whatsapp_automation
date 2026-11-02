@@ -261,6 +261,8 @@ class Campaign(TimestampMixin, Base):
     # One entry per {{n}} in the template body: {"source": "column" | "text", "value": str, "fallback": str}
     params: Mapped[list] = mapped_column(JSONB, default=list)
     header_image_url: Mapped[str | None] = mapped_column(String(1000))
+    # Image uploaded to Meta's media servers (preferred over a link: no public hosting needed). Valid ~30 days.
+    header_media_id: Mapped[str | None] = mapped_column(String(100))
     status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | sending | paused | done | cancelled
     # Why a campaign stopped by itself (template or image problem). Customers stay pending, nobody is marked failed.
     pause_reason: Mapped[str | None] = mapped_column(Text)

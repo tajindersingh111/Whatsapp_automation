@@ -253,3 +253,52 @@ async def test_customer_level_failures_do_not_pause(api, tenant, db, graph):
     await drain()
     detail = (await api.get(f"/admin/tenants/{tenant.id}/campaigns/{cid}", headers=ADMIN)).json()
     assert detail["status"] == "done" and detail["counts"]["failed"] == 3  # bad numbers are failed, campaign finishes
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+async def test_image_header_from_template_upload_or_link(api, tenant, db, graph):
+    await _live_templates(db, tenant, graph)
+    graph.templates[0]["components"][0]["example"] = {"header_handle": ["https://cdn.example.com/diwali.jpg"]}  # promo_img's own sample
+    graph.templates.append({"name": "no_sample", "language": "en", "status": "APPROVED", "category": "MARKETING",
+                            "components": [{"type": "HEADER", "format": "IMAGE"}, {"type": "BODY", "text": "x"}]})
+    none = json.dumps([])
+
+    # 1. Reuse the image saved in the template: downloaded once, uploaded to Meta, sent by media id (no public link needed).
+    r = await create(api, tenant.id, template_name="promo_img", params=none, use_template_image="true")
+    assert r.status_code == 201, r.text
+    assert r.json()["header_media_id"] == "media-1" and r.json()["header_image_url"] is None
+    assert graph.uploaded == [{"phone_id": "1111", "type": "image/jpeg", "size": graph.uploaded[0]["size"]}]
+    cid = r.json()["id"]
+    await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/test", json={"phone": "9999911111"}, headers=ADMIN)
+    assert graph.sent[-1]["template"]["components"][0] == {"type": "header", "parameters": [{"type": "image", "image": {"id": "media-1"}}]}
+
+    # 2. Upload your own image.
+    up = await api.post(f"/admin/tenants/{tenant.id}/campaigns/media", files={"file": ("offer.png", PNG, "image/png")}, headers=ADMIN)
+    assert up.status_code == 200 and up.json()["media_id"] == "media-2" and graph.uploaded[1]["type"] == "image/png"
+    r = await create(api, tenant.id, template_name="promo_img", params=none, header_media_id="media-2")
+    assert r.status_code == 201 and r.json()["header_media_id"] == "media-2"
+    not_image = await api.post(f"/admin/tenants/{tenant.id}/campaigns/media", files={"file": ("x.txt", b"hello", "text/plain")}, headers=ADMIN)
+    assert not_image.status_code == 422 and "JPEG or PNG" in not_image.json()["detail"]
+
+    # 3. A template with no sample image can't use option 1.
+    r = await create(api, tenant.id, template_name="no_sample", params=none, use_template_image="true")
+    assert r.status_code == 422 and "no sample image" in r.json()["detail"]
+    # And an image header still needs one of the three.
+    r = await create(api, tenant.id, template_name="promo_img", params=none)
+    assert r.status_code == 422 and "template's own image" in r.json()["detail"]
+
+
+async def test_resume_with_the_templates_own_image(api, tenant, db, graph):
+    await _live_templates(db, tenant, graph)
+    graph.templates[0]["components"][0]["example"] = {"header_handle": ["https://cdn.example.com/diwali.jpg"]}
+    cid = (await create(api, tenant.id, template_name="promo_img", params=json.dumps([]), header_image_url="https://cdn.example.com/diwali.jpg")).json()["id"]
+    await db.execute(update(Campaign).where(Campaign.id == cid).values(status="paused", pause_reason="Meta API 400 (code 131053): media upload error"))
+    await db.commit()
+    r = await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/resume", json={"use_template_image": True}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["status"] == "sending" and r.json()["header_media_id"] == "media-1"
+    assert r.json()["header_image_url"] is None
+    await drain()
+    sent = [x for x in graph.sent if x["type"] == "template"]
+    assert sent and all(x["template"]["components"][0]["parameters"][0]["image"] == {"id": "media-1"} for x in sent)

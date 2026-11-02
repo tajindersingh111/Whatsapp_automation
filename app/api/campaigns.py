@@ -19,7 +19,7 @@ from app.models import Campaign, CampaignRecipient, Tenant, WhatsAppAccount
 from app.security import decrypt, require_admin
 from app.services import campaigns as svc
 from app.services.messaging import tenant_sender
-from app.whatsapp.client import WhatsAppError, check_image_url, discover_numbers, list_templates
+from app.whatsapp.client import MAX_IMAGE_BYTES, WhatsAppError, check_image_url, discover_numbers, list_templates, sniff_image, upload_media
 
 router = APIRouter(prefix="/admin/tenants/{tenant_id}", tags=["campaigns"], dependencies=[Depends(require_admin)])
 
@@ -32,6 +32,8 @@ class ParamSpec(BaseModel):
 
 class ResumeIn(BaseModel):
     header_image_url: str | None = Field(default=None, max_length=1000)
+    header_media_id: str | None = Field(default=None, max_length=100)
+    use_template_image: bool = False
 
 
 class TestIn(BaseModel):
@@ -56,22 +58,59 @@ async def _view(session: AsyncSession, c: Campaign) -> dict:
     return {
         "id": c.id, "name": c.name, "template_name": c.template_name, "template_language": c.template_language,
         "template_category": c.template_category, "params": c.params, "header_image_url": c.header_image_url,
+        "header_media_id": c.header_media_id,
         "status": c.status, "pause_reason": c.pause_reason, "total": c.total, "counts": await svc.counts(session, c.id),
         "created_at": c.created_at, "started_at": c.started_at, "finished_at": c.finished_at,
     }
 
 
+async def _own_account(session: AsyncSession, tenant_id: uuid.UUID) -> WhatsAppAccount | None:
+    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
+    if account is None or account.phone_number_id.startswith("sandbox") or not account.waba_id:
+        return None  # sandbox / not connected: nothing real to talk to
+    return account
+
+
+async def _upload_image(account: WhatsAppAccount, data: bytes, filename: str) -> str:
+    mime = sniff_image(data)
+    if mime is None:
+        raise HTTPException(status_code=422, detail="Only JPEG or PNG images work in WhatsApp templates.")
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=422, detail="The image is larger than 5 MB. Use a smaller image.")
+    try:
+        return await upload_media(http_client(), get_settings().meta_graph_version, account.phone_number_id, decrypt(account.access_token_enc), data, mime, filename)
+    except WhatsAppError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Could not reach Meta: {exc}") from exc
+
+
+async def _template_image_to_media(account: WhatsAppAccount, template: dict) -> str:
+    """Reuse the sample image given when the template was created: download it, upload it for this number."""
+    example = template.get("header_example")
+    if not example:
+        raise HTTPException(status_code=422, detail="This template has no sample image to reuse. Upload an image instead.")
+    try:
+        resp = await http_client().get(example, timeout=30)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=422, detail=f"Could not download the template's sample image ({type(exc).__name__}). Upload an image instead.") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=422, detail=f"The template's sample image is no longer available ({resp.status_code}). Upload an image instead.")
+    return await _upload_image(account, resp.content, "template-image.jpg")
+
+
 async def validate_template(
-    session: AsyncSession, tenant_id: uuid.UUID, name: str, language: str, specs: list[dict], header_image_url: str | None
-) -> str | None:
-    """Catch template problems before anything is sent. Returns the header image URL to use.
+    session: AsyncSession, tenant_id: uuid.UUID, name: str, language: str, specs: list[dict],
+    header_image_url: str | None, header_media_id: str | None = None, use_template_image: bool = False,
+) -> tuple[str | None, str | None]:
+    """Catch template problems before anything is sent. Returns (image link, Meta media id) to use.
 
     Fails open when Meta can't be reached: it never blocks a send on a lookup error.
     """
     url = (header_image_url or "").strip() or None
-    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
-    live = account is not None and account.waba_id and not account.phone_number_id.startswith("sandbox")
-    template = None
+    media_id = (header_media_id or "").strip() or None
+    account = await _own_account(session, tenant_id)
+    live = account is not None
     if live:
         try:
             found = await list_templates(http_client(), get_settings().meta_graph_version, account.waba_id, decrypt(account.access_token_enc))
@@ -91,18 +130,34 @@ async def validate_template(
             fmt = template["header"]
             if fmt in ("VIDEO", "DOCUMENT", "LOCATION"):
                 raise HTTPException(status_code=422, detail=f"Templates with a {fmt.lower()} header are not supported yet. Use a text or image header.")
-            if fmt == "IMAGE" and not url:
-                raise HTTPException(status_code=422, detail="This template has an image header. Paste the direct link to the image (a public https .jpg/.png link).")
-            if fmt != "IMAGE":
-                url = None  # an image sent to a template without an image header is rejected by Meta
-    if url:
+            if fmt == "IMAGE":
+                if use_template_image and not media_id and not url:
+                    media_id = await _template_image_to_media(account, template)
+                if not (url or media_id):
+                    raise HTTPException(status_code=422, detail="This template has an image header. Choose the template's own image, upload an image, or paste a public https image link.")
+            else:
+                url = media_id = None  # an image sent to a template without an image header is rejected by Meta
+    if url and not media_id:
         if live:
             problem = await check_image_url(http_client(), url)
             if problem:
                 raise HTTPException(status_code=422, detail=problem)
         elif not url.lower().startswith("https://"):
             raise HTTPException(status_code=422, detail="Image link must start with https://")
-    return url
+    return url, media_id
+
+
+@router.post("/campaigns/media")
+async def upload_campaign_image(tenant_id: uuid.UUID, file: UploadFile = File(...), session: AsyncSession = Depends(get_session)) -> dict:
+    """Upload a header image (JPEG/PNG, up to 5 MB) to Meta for this brand's number; returns the media id."""
+    await _tenant(session, tenant_id)
+    data = await file.read()
+    if sniff_image(data) is None:
+        raise HTTPException(status_code=422, detail="Only JPEG or PNG images work in WhatsApp templates.")
+    account = await _own_account(session, tenant_id)
+    if account is None:
+        return {"media_id": f"sandbox-{uuid.uuid4().hex[:12]}", "sandbox": True}
+    return {"media_id": await _upload_image(account, data, file.filename or "header.jpg"), "sandbox": False}
 
 
 @router.get("/templates")
@@ -166,6 +221,8 @@ async def create_campaign(
     template_category: str | None = Form(None, max_length=30),
     params: str = Form("[]"),
     header_image_url: str | None = Form(None, max_length=1000),
+    header_media_id: str | None = Form(None, max_length=100),
+    use_template_image: bool = Form(False),
     skip_never_delivered: bool = Form(True),
     skip_never_replied: bool = Form(False),
     file: UploadFile = File(...),
@@ -185,10 +242,12 @@ async def create_campaign(
     missing = [p["value"] for p in specs if p["source"] == "column" and p["value"] not in parsed.columns]
     if missing:
         raise HTTPException(status_code=422, detail=f"CSV has no column named: {', '.join(missing)}")
-    header_image_url = await validate_template(session, tenant_id, template_name.strip(), template_language.strip() or "en", specs, header_image_url)
+    header_image_url, header_media_id = await validate_template(
+        session, tenant_id, template_name.strip(), template_language.strip() or "en", specs, header_image_url, header_media_id, use_template_image
+    )
     campaign = Campaign(
         tenant_id=tenant_id, name=name.strip(), template_name=template_name.strip(), template_language=template_language.strip() or "en",
-        template_category=template_category, params=specs, header_image_url=(header_image_url or "").strip() or None, status="draft",
+        template_category=template_category, params=specs, header_image_url=header_image_url, header_media_id=header_media_id, status="draft",
     )
     session.add(campaign)
     await session.flush()
@@ -262,11 +321,15 @@ async def resume(tenant_id: uuid.UUID, campaign_id: int, body: ResumeIn, session
     campaign = await _campaign(session, tenant_id, campaign_id)
     if campaign.status != "paused":
         raise HTTPException(status_code=409, detail=f"campaign is {campaign.status}, not paused")
-    url = await validate_template(
+    fresh = body.header_image_url is not None or body.header_media_id is not None or body.use_template_image
+    url, media_id = await validate_template(
         session, tenant_id, campaign.template_name, campaign.template_language, campaign.params or [],
-        body.header_image_url if body.header_image_url is not None else campaign.header_image_url,
+        body.header_image_url if fresh else campaign.header_image_url,
+        body.header_media_id if fresh else campaign.header_media_id,
+        body.use_template_image,
     )
     campaign.header_image_url = url
+    campaign.header_media_id = media_id
     campaign.status = "sending"
     campaign.pause_reason = None
     await enqueue(session, "campaign_send", {"campaign_id": campaign.id}, tenant_id=tenant_id)

@@ -273,6 +273,7 @@ def build_message(campaign: Campaign, name: str | None, values: dict) -> dict:
         campaign.template_language,
         body_params=resolve_params(campaign.params or [], name, values) or None,
         header_image_url=campaign.header_image_url,
+        header_media_id=campaign.header_media_id,
     )
 
 

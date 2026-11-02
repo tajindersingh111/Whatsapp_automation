@@ -125,6 +125,13 @@ class GraphFake:
             self.sent.append(body)
             return {"messages": [{"id": f"wamid.out.{len(self.sent)}"}]}
 
+        @self.app.post("/{version}/{phone_id}/media")
+        async def media(version: str, phone_id: str, request: Request):
+            form = await request.form()
+            data = await form["file"].read()
+            self.uploaded.append({"phone_id": phone_id, "type": form.get("type"), "size": len(data)})
+            return {"id": f"media-{len(self.uploaded)}"}
+
         @self.app.get("/{version}/{waba_id}/message_templates")
         async def templates(version: str, waba_id: str):
             return {"data": self.templates}
@@ -159,6 +166,7 @@ class GraphFake:
         self.fail_after: int | None = None
         self.templates: list[dict] = []
         self.subscribed: list[str] = []
+        self.uploaded: list[dict] = []
 
 
 @pytest.fixture

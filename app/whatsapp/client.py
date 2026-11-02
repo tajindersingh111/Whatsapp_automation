@@ -33,6 +33,27 @@ PERMANENT_ERROR_CODES = {
 RATE_LIMIT_CODES = {4, 80007, 130429, 131048, 131056}
 
 
+# Errors that mean OUR setup is wrong (template, parameters, image link, account), not that the customer's
+# number is bad. Sending the same message to the next customer would fail the same way, so campaigns pause.
+CONFIG_ERROR_CODES = {
+    100, 131008, 131009, 131037, 131042, 131052, 131053,
+    132000, 132001, 132005, 132007, 132012, 132015, 132016, 132068, 132069,
+    10, 190, 200, 368, 80008,
+}
+_CONFIG_WORDS = re.compile(r"format mismatch|header|template|parameter|media|access token|permission", re.I)
+_CODE_IN_TEXT = re.compile(r"\(code (\d+)\)")
+
+
+def is_config_error(text: str | None) -> bool:
+    """True when a stored send error points at the template/setup rather than the customer's number."""
+    if not text:
+        return False
+    m = _CODE_IN_TEXT.search(text)
+    if m and int(m.group(1)) in CONFIG_ERROR_CODES:
+        return True
+    return bool(_CONFIG_WORDS.search(text))
+
+
 class WhatsAppError(Exception):
     def __init__(self, message: str, code: int | None = None, status: int | None = None):
         super().__init__(message)
@@ -71,7 +92,8 @@ class CloudApiSender:
         if resp.status_code >= 400:
             err = data.get("error", {}) if isinstance(data, dict) else {}
             detail = err.get("error_data", {}).get("details") or err.get("message") or resp.text[:300]
-            raise WhatsAppError(f"Meta API {resp.status_code}: {detail}", code=err.get("code"), status=resp.status_code)
+            code = err.get("code")
+            raise WhatsAppError(f"Meta API {resp.status_code}{f' (code {code})' if code else ''}: {detail}", code=code, status=resp.status_code)
         return data["messages"][0]["id"]
 
     async def mark_read(self, wa_message_id: str) -> None:
@@ -336,3 +358,29 @@ async def discover_numbers(http: httpx.AsyncClient, graph_version: str, access_t
                 "is_test_number": (n.get("display_phone_number") or "").replace(" ", "").startswith("+1555"),
             })
     return numbers
+
+
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+async def check_image_url(http: httpx.AsyncClient, url: str) -> str | None:
+    """Why Meta could not use this link as a template header image, or None if it looks fine.
+
+    Meta downloads the link itself: it must be a public https URL straight to a JPEG/PNG (<= 5 MB),
+    not a Google Drive / Instagram / web page link.
+    """
+    if not url.lower().startswith("https://"):
+        return "Image link must start with https://"
+    try:
+        async with http.stream("GET", url, timeout=15, headers={"User-Agent": "WhatsApp/2"}) as resp:
+            if resp.status_code >= 400:
+                return f"The image link returned an error ({resp.status_code}). It must be a public direct link to the image."
+            kind = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            size = int(resp.headers.get("content-length") or 0)
+    except httpx.HTTPError as exc:
+        return f"Could not open the image link ({type(exc).__name__}). Meta will not be able to either."
+    if kind not in ("image/jpeg", "image/jpg", "image/png"):
+        return f"The link is not a JPEG/PNG image (it returned '{kind or 'unknown'}'). Use a direct link to a .jpg or .png file, not a Drive/Instagram/web page link."
+    if size > MAX_IMAGE_BYTES:
+        return "The image is larger than 5 MB. Use a smaller image."
+    return None

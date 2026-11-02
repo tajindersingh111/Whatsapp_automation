@@ -166,6 +166,23 @@ def graph():
     return GraphFake()
 
 
+def make_cdn() -> FastAPI:
+    """A fake image host: a real JPEG link and a web page link (which Meta cannot use as an image)."""
+    from fastapi.responses import Response
+
+    cdn = FastAPI()
+
+    @cdn.get("/diwali.jpg")
+    async def image():
+        return Response(content=bytes([0xFF, 0xD8, 0xFF, 0xE0]) + b"fake-jpeg", media_type="image/jpeg")
+
+    @cdn.get("/page.html")
+    async def page():
+        return Response(content=b"<html></html>", media_type="text/html")
+
+    return cdn
+
+
 @pytest.fixture
 def mock_store():
     return create_mock_store(STORE_SECRET, agent_webhook_url=None)
@@ -177,6 +194,7 @@ async def http(graph, mock_store):
         mounts={
             "https://graph.facebook.com": httpx.ASGITransport(app=graph.app),
             "http://store.test": httpx.ASGITransport(app=mock_store),
+            "https://cdn.example.com": httpx.ASGITransport(app=make_cdn()),
         }
     )
     connectors_mod._http = client

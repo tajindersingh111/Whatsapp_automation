@@ -673,7 +673,7 @@ function progressBar(c) {
   const seg = (n, color) => n ? `<span style="width:${(n / total) * 100}%;background:${color}"></span>` : "";
   return `<div class="bar">${seg(k.read, "#34b7f1")}${seg(k.delivered, "#8a8aa0")}${seg(k.sent, "#c9c8d6")}${seg(k.failed, "var(--danger)")}${seg(k.skipped, "var(--accent)")}</div>`;
 }
-const CAMP_PILL = { draft: "", sending: "orange", done: "ok", cancelled: "danger" };
+const CAMP_PILL = { draft: "", sending: "orange", paused: "danger", done: "ok", cancelled: "danger" };
 
 views.campaigns = async (el) => {
   clearInterval(campaignTimer);
@@ -720,7 +720,8 @@ async function campaignForm(el) {
         <input type="file" id="cp_file" accept=".csv,text/csv" required></p>
       <p class="muted small" id="cp_cols"></p>
       <div id="cp_params"></div>
-      <p id="cp_imgwrap" style="display:none"><label>Header image URL (this template has an image header)</label><input id="cp_img" placeholder="https://…/offer.jpg"></p>
+      <p id="cp_imgwrap" style="display:none"><label id="cp_imglabel">Header image link (this template has an image header)</label><input id="cp_img" placeholder="https://yourwebsite.com/offer.jpg">
+        <span class="muted small">Must be a public, direct https link to a .jpg or .png (max 5 MB), not a Google Drive, Instagram or web page link. Meta downloads it from this link.</span></p>
       <div class="callout info" style="flex-direction:column;align-items:stretch;gap:8px">
         <b>Save money automatically</b>
         <label class="check"><input type="checkbox" id="cp_skip_dead" checked> Skip numbers whose last 2+ campaign messages never got delivered (single tick)</label>
@@ -746,7 +747,11 @@ async function campaignForm(el) {
     const pv = $("#cp_preview", el);
     pv.style.display = t?.body ? "" : "none";
     pv.textContent = t?.body || "";
-    $("#cp_imgwrap", el).style.display = t?.header === "IMAGE" ? "" : "none";
+    const manual = $("#cp_tpl", el).value === "manual";
+    const needsImage = t?.header === "IMAGE";
+    $("#cp_imgwrap", el).style.display = needsImage || manual ? "" : "none";
+    $("#cp_img", el).required = needsImage;
+    $("#cp_imglabel", el).textContent = needsImage ? "Header image link (required: this template has an image header)" : "Header image link (only if your template has an image header)";
     const st = $("#cp_status", el);
     if (t && t.status && !t.approved) st.innerHTML = `<span class="error">⏳ This template is <b>${esc(t.status)}</b>, not approved yet. Meta will reject sends until it's Approved.</span>`;
     else st.textContent = "";
@@ -826,7 +831,12 @@ async function campaignDetail(el, id) {
     ${c.status === "sending" ? `<span class="muted small"><span class="spinner" style="display:inline-block;vertical-align:middle"></span> sending · updates every 5s</span>` : ""}
     <span class="spacer" style="flex:1"></span>
     ${sent ? `<button class="secondary" id="cd_aud">See who read & replied</button>` : ""}
-    ${c.status === "sending" ? `<button class="secondary danger" id="cd_cancel">Stop sending</button>` : ""}</div>
+    ${c.status === "sending" || c.status === "paused" ? `<button class="secondary danger" id="cd_cancel">${c.status === "paused" ? "Cancel campaign" : "Stop sending"}</button>` : ""}</div>
+  ${c.status === "paused" ? `<div class="callout" style="align-items:stretch;flex-direction:column">
+    <div><b>Campaign paused: there is a problem with the template.</b><br><span>${esc(c.pause_reason || "")}</span><br>
+      <span class="muted small">Nobody was marked as failed: the ${k.pending} waiting customer(s) are still in the queue. Fix it and resume.</span></div>
+    ${c.template_name ? `<div class="row" style="flex-wrap:nowrap"><input id="cd_img" placeholder="New image link (https://…/offer.jpg)" value="${esc(c.header_image_url || "")}" style="flex:1"><button class="accent" id="cd_resume">Resume sending</button></div>` : ""}
+  </div>` : ""}
   <div class="kpis">
     ${kpi("Waiting", k.pending, "in queue")}
     ${kpi("Single tick", k.sent, pct(k.sent) + " not delivered yet", "sent")}
@@ -857,6 +867,12 @@ async function campaignDetail(el, id) {
   if (start) start.onclick = async () => {
     if (!start.dataset.armed) { start.dataset.armed = "1"; start.textContent = `Click again to send to ${toSend} customers`; return; }
     await api(T(`/campaigns/${id}/start`), { method: "POST" }); toast("Sending started"); render();
+  };
+  const resume = $("#cd_resume", el);
+  if (resume) resume.onclick = async () => {
+    resume.disabled = true;
+    try { await api(T(`/campaigns/${id}/resume`), { method: "POST", body: { header_image_url: $("#cd_img", el).value.trim() || null } }); toast("Resumed"); render(); }
+    catch (err) { toast(err.message, true); resume.disabled = false; }
   };
   const cancelBtn = $("#cd_cancel", el);
   if (cancelBtn) cancelBtn.onclick = async () => { await api(T(`/campaigns/${id}/cancel`), { method: "POST" }); render(); };

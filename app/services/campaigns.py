@@ -22,7 +22,7 @@ from app.connectors.base import normalize_phone
 from app.models import Campaign, CampaignRecipient, Contact, Tenant
 from app.services.conversations import get_or_create_contact, get_or_create_conversation
 from app.services.messaging import send_message
-from app.whatsapp.client import RATE_LIMIT_CODES, Sender, WhatsAppError, template_message
+from app.whatsapp.client import RATE_LIMIT_CODES, Sender, WhatsAppError, is_config_error, template_message
 
 log = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ MAX_RECIPIENTS = 10_000
 MAX_CSV_BYTES = 5 * 1024 * 1024
 BATCH_SIZE = 50
 REPLY_WINDOW = timedelta(days=7)
+CLOCK_SKEW = timedelta(minutes=2)
 SEND_INTERVAL_SECONDS = 0.1  # ~10 messages/second, well under Cloud API throughput
 
 _PHONE_HEADERS = ("phone", "mobile", "number", "whatsapp", "contact", "phone number", "mobile number", "whatsapp number", "phone_number", "mobile_no", "phone no", "mob")
@@ -211,7 +212,8 @@ async def mark_replied(session: AsyncSession, tenant_id, phone: str, at: datetim
         update(r)
         .where(
             r.tenant_id == tenant_id, r.phone == phone, r.replied_at.is_(None),
-            r.status.in_(["sent", "delivered", "read"]), r.sent_at >= at - REPLY_WINDOW, r.sent_at <= at,
+            # Meta stamps messages to the whole second and clocks differ slightly, so allow a little skew.
+            r.status.in_(["sent", "delivered", "read"]), r.sent_at >= at - REPLY_WINDOW, r.sent_at <= at + CLOCK_SKEW,
         )
         .values(replied_at=at, status="read")
     )
@@ -288,6 +290,7 @@ class BatchResult:
     skipped: int = 0
     remaining: int = 0
     rate_limited: bool = False
+    paused_reason: str | None = None  # template/setup problem: stop, keep customers pending
 
 
 async def send_batch(session: AsyncSession, sender: Sender, tenant: Tenant, campaign: Campaign, limit: int = BATCH_SIZE) -> BatchResult:
@@ -314,6 +317,14 @@ async def send_batch(session: AsyncSession, sender: Sender, tenant: Tenant, camp
             await session.rollback()
             log.warning("campaign %s paused (%s): %s", campaign_id, "rate limit" if exc.code in RATE_LIMIT_CODES else "temporary error", exc)
             result.rate_limited = True
+            break
+        if msg.status == "failed" and is_config_error(msg.error):
+            # The same message would fail for every customer. Stop now, keep this one pending, and don't
+            # leave a failed template message in their chat.
+            result.paused_reason = msg.error
+            await session.delete(msg)
+            await session.commit()
+            log.warning("campaign %s paused: %s", campaign_id, msg.error)
             break
         r.sent_at = datetime.now(timezone.utc)
         if msg.status == "failed":

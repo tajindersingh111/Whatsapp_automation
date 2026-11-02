@@ -19,7 +19,7 @@ from app.models import Campaign, CampaignRecipient, Tenant, WhatsAppAccount
 from app.security import decrypt, require_admin
 from app.services import campaigns as svc
 from app.services.messaging import tenant_sender
-from app.whatsapp.client import WhatsAppError, discover_numbers, list_templates
+from app.whatsapp.client import WhatsAppError, check_image_url, discover_numbers, list_templates
 
 router = APIRouter(prefix="/admin/tenants/{tenant_id}", tags=["campaigns"], dependencies=[Depends(require_admin)])
 
@@ -28,6 +28,10 @@ class ParamSpec(BaseModel):
     source: str = Field(pattern="^(column|text)$")
     value: str = Field(default="", max_length=500)
     fallback: str = Field(default="", max_length=200)
+
+
+class ResumeIn(BaseModel):
+    header_image_url: str | None = Field(default=None, max_length=1000)
 
 
 class TestIn(BaseModel):
@@ -52,9 +56,53 @@ async def _view(session: AsyncSession, c: Campaign) -> dict:
     return {
         "id": c.id, "name": c.name, "template_name": c.template_name, "template_language": c.template_language,
         "template_category": c.template_category, "params": c.params, "header_image_url": c.header_image_url,
-        "status": c.status, "total": c.total, "counts": await svc.counts(session, c.id),
+        "status": c.status, "pause_reason": c.pause_reason, "total": c.total, "counts": await svc.counts(session, c.id),
         "created_at": c.created_at, "started_at": c.started_at, "finished_at": c.finished_at,
     }
+
+
+async def validate_template(
+    session: AsyncSession, tenant_id: uuid.UUID, name: str, language: str, specs: list[dict], header_image_url: str | None
+) -> str | None:
+    """Catch template problems before anything is sent. Returns the header image URL to use.
+
+    Fails open when Meta can't be reached: it never blocks a send on a lookup error.
+    """
+    url = (header_image_url or "").strip() or None
+    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
+    live = account is not None and account.waba_id and not account.phone_number_id.startswith("sandbox")
+    template = None
+    if live:
+        try:
+            found = await list_templates(http_client(), get_settings().meta_graph_version, account.waba_id, decrypt(account.access_token_enc))
+        except (WhatsAppError, httpx.HTTPError):
+            found = None
+        if found is not None:
+            template = next((t for t in found if t["name"] == name and t["language"] == language), None)
+            if template is None:
+                same_name = [t["language"] for t in found if t["name"] == name]
+                hint = (f" It exists in language(s): {', '.join(same_name)}. Use that language code." if same_name
+                        else f" Approved templates: {', '.join(t['name'] for t in found if t['approved']) or 'none'}. A template must be created in the same WhatsApp account as this number.")
+                raise HTTPException(status_code=422, detail=f"Template '{name}' ({language}) was not found on this WhatsApp account.{hint}")
+            if not template["approved"]:
+                raise HTTPException(status_code=422, detail=f"Template '{name}' is {template['status']}, not approved yet. Meta only delivers approved templates.")
+            if len(specs) != template["param_count"]:
+                raise HTTPException(status_code=422, detail=f"This template has {template['param_count']} variable(s) but {len(specs)} were set.")
+            fmt = template["header"]
+            if fmt in ("VIDEO", "DOCUMENT", "LOCATION"):
+                raise HTTPException(status_code=422, detail=f"Templates with a {fmt.lower()} header are not supported yet. Use a text or image header.")
+            if fmt == "IMAGE" and not url:
+                raise HTTPException(status_code=422, detail="This template has an image header. Paste the direct link to the image (a public https .jpg/.png link).")
+            if fmt != "IMAGE":
+                url = None  # an image sent to a template without an image header is rejected by Meta
+    if url:
+        if live:
+            problem = await check_image_url(http_client(), url)
+            if problem:
+                raise HTTPException(status_code=422, detail=problem)
+        elif not url.lower().startswith("https://"):
+            raise HTTPException(status_code=422, detail="Image link must start with https://")
+    return url
 
 
 @router.get("/templates")
@@ -137,6 +185,7 @@ async def create_campaign(
     missing = [p["value"] for p in specs if p["source"] == "column" and p["value"] not in parsed.columns]
     if missing:
         raise HTTPException(status_code=422, detail=f"CSV has no column named: {', '.join(missing)}")
+    header_image_url = await validate_template(session, tenant_id, template_name.strip(), template_language.strip() or "en", specs, header_image_url)
     campaign = Campaign(
         tenant_id=tenant_id, name=name.strip(), template_name=template_name.strip(), template_language=template_language.strip() or "en",
         template_category=template_category, params=specs, header_image_url=(header_image_url or "").strip() or None, status="draft",
@@ -207,10 +256,28 @@ async def start(tenant_id: uuid.UUID, campaign_id: int, session: AsyncSession = 
     return await _view(session, campaign)
 
 
+@router.post("/campaigns/{campaign_id}/resume")
+async def resume(tenant_id: uuid.UUID, campaign_id: int, body: ResumeIn, session: AsyncSession = Depends(get_session)) -> dict:
+    """Continue a campaign that paused itself (template/image problem), optionally with a corrected image link."""
+    campaign = await _campaign(session, tenant_id, campaign_id)
+    if campaign.status != "paused":
+        raise HTTPException(status_code=409, detail=f"campaign is {campaign.status}, not paused")
+    url = await validate_template(
+        session, tenant_id, campaign.template_name, campaign.template_language, campaign.params or [],
+        body.header_image_url if body.header_image_url is not None else campaign.header_image_url,
+    )
+    campaign.header_image_url = url
+    campaign.status = "sending"
+    campaign.pause_reason = None
+    await enqueue(session, "campaign_send", {"campaign_id": campaign.id}, tenant_id=tenant_id)
+    await session.commit()
+    return await _view(session, campaign)
+
+
 @router.post("/campaigns/{campaign_id}/cancel")
 async def cancel(tenant_id: uuid.UUID, campaign_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     campaign = await _campaign(session, tenant_id, campaign_id)
-    if campaign.status in ("draft", "sending"):
+    if campaign.status in ("draft", "sending", "paused"):
         campaign.status = "cancelled"
         campaign.finished_at = datetime.now(timezone.utc)
         await session.commit()

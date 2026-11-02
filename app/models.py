@@ -261,7 +261,9 @@ class Campaign(TimestampMixin, Base):
     # One entry per {{n}} in the template body: {"source": "column" | "text", "value": str, "fallback": str}
     params: Mapped[list] = mapped_column(JSONB, default=list)
     header_image_url: Mapped[str | None] = mapped_column(String(1000))
-    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | sending | done | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | sending | paused | done | cancelled
+    # Why a campaign stopped by itself (template or image problem). Customers stay pending, nobody is marked failed.
+    pause_reason: Mapped[str | None] = mapped_column(Text)
     total: Mapped[int] = mapped_column(Integer, default=0)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -102,3 +102,31 @@ async def test_auto_skip_numbers_that_never_get_delivered(api, tenant, db, graph
         files={"file": ("l.csv", csv_for(one), "text/csv")}, headers=ADMIN,
     )
     assert r.json()["counts"]["pending"] == 2
+
+
+async def test_reply_in_the_same_second_still_counts(db, tenant):
+    """Meta timestamps are whole seconds, so a reply can look slightly older than our own send time."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.models import Campaign
+    from app.services.campaigns import mark_replied
+
+    sent_at = datetime.now(timezone.utc)
+    campaign = Campaign(tenant_id=tenant.id, name="c", template_name="t", status="done", total=1)
+    db.add(campaign)
+    await db.flush()
+    db.add(CampaignRecipient(campaign_id=campaign.id, tenant_id=tenant.id, phone="919830000001", status="delivered", sent_at=sent_at))
+    await db.flush()
+
+    await mark_replied(db, tenant.id, "919830000001", sent_at - timedelta(seconds=1))  # reply "before" the send by clock rounding
+    row = await db.scalar(select(CampaignRecipient).where(CampaignRecipient.phone == "919830000001"))
+    await db.refresh(row)
+    assert row.replied_at is not None
+
+    # But a message from long before the campaign is not a reply to it.
+    db.add(CampaignRecipient(campaign_id=campaign.id, tenant_id=tenant.id, phone="919830000002", status="delivered", sent_at=sent_at))
+    await db.flush()
+    await mark_replied(db, tenant.id, "919830000002", sent_at - timedelta(hours=1))
+    other = await db.scalar(select(CampaignRecipient).where(CampaignRecipient.phone == "919830000002"))
+    await db.refresh(other)
+    assert other.replied_at is None

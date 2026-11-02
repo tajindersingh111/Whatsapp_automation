@@ -432,7 +432,10 @@ async def handle_campaign_send(session: AsyncSession, job: Job) -> None:
     result = await campaign_service.send_batch(session, sender, tenant, campaign)
     campaign = await session.get(Campaign, campaign_id, populate_existing=True)
     assert campaign is not None
-    if result.rate_limited:
+    if result.paused_reason:
+        campaign.status = "paused"
+        campaign.pause_reason = result.paused_reason
+    elif result.rate_limited:
         await enqueue(session, "campaign_send", {"campaign_id": campaign_id}, tenant_id=tenant.id, delay_seconds=60)
     elif result.remaining and campaign.status == "sending":
         await enqueue(session, "campaign_send", {"campaign_id": campaign_id}, tenant_id=tenant.id, delay_seconds=1)

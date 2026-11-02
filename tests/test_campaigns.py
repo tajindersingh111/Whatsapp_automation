@@ -175,3 +175,81 @@ async def test_templates_on_other_accounts_are_reported(api, tenant, db, graph):
     assert others[0]["templates"][0]["name"] == "introducing"
     # Without scan=1 nothing extra is fetched.
     assert "other_accounts" not in (await api.get(f"/admin/tenants/{tenant.id}/templates", headers=ADMIN)).json()
+
+
+async def _live_templates(db, tenant, graph):
+    account = await db.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant.id))
+    account.waba_id = "999"
+    await db.commit()
+    graph.templates = [
+        {"name": "promo_img", "language": "en", "status": "APPROVED", "category": "MARKETING",
+         "components": [{"type": "HEADER", "format": "IMAGE"}, {"type": "BODY", "text": "Big sale"}]},
+        {"name": "promo_text", "language": "en", "status": "APPROVED", "category": "MARKETING",
+         "components": [{"type": "HEADER", "format": "TEXT", "text": "Sale"}, {"type": "BODY", "text": "Hi {{1}}"}]},
+        {"name": "in_review", "language": "en", "status": "PENDING", "category": "MARKETING", "components": [{"type": "BODY", "text": "x"}]},
+    ]
+
+
+async def test_template_problems_are_caught_before_sending(api, tenant, db, graph):
+    await _live_templates(db, tenant, graph)
+    no_params = json.dumps([])
+
+    # Image header but no image link: exactly what caused "expected IMAGE, received UNKNOWN".
+    r = await create(api, tenant.id, template_name="promo_img", params=no_params)
+    assert r.status_code == 422 and "image header" in r.json()["detail"]
+    # A web page / Drive style link is not an image.
+    r = await create(api, tenant.id, template_name="promo_img", params=no_params, header_image_url="https://cdn.example.com/page.html")
+    assert r.status_code == 422 and "not a JPEG/PNG" in r.json()["detail"]
+    r = await create(api, tenant.id, template_name="promo_img", params=no_params, header_image_url="http://cdn.example.com/diwali.jpg")
+    assert r.status_code == 422 and "https" in r.json()["detail"]
+    ok = await create(api, tenant.id, template_name="promo_img", params=no_params, header_image_url="https://cdn.example.com/diwali.jpg")
+    assert ok.status_code == 201 and ok.json()["header_image_url"] == "https://cdn.example.com/diwali.jpg"
+
+    # An image sent to a template without an image header would be rejected by Meta, so it is dropped.
+    one = json.dumps([{"source": "column", "value": "Name", "fallback": "Customer"}])
+    r = await create(api, tenant.id, template_name="promo_text", params=one, header_image_url="https://cdn.example.com/diwali.jpg")
+    assert r.status_code == 201 and r.json()["header_image_url"] is None
+
+    r = await create(api, tenant.id, template_name="promo_text", params=no_params)  # template wants 1 variable
+    assert r.status_code == 422 and "1 variable" in r.json()["detail"]
+    r = await create(api, tenant.id, template_name="in_review", params=no_params)
+    assert r.status_code == 422 and "PENDING" in r.json()["detail"]
+    r = await create(api, tenant.id, template_name="introducing", params=no_params)
+    assert r.status_code == 422 and "not found" in r.json()["detail"] and "promo_img" in r.json()["detail"]
+    r = await create(api, tenant.id, template_name="promo_img", template_language="hi", params=no_params)
+    assert r.status_code == 422 and "language" in r.json()["detail"]
+
+
+async def test_template_error_pauses_campaign_then_resume_sends(api, tenant, db, graph):
+    cid = (await create(api, tenant.id, params=json.dumps([]))).json()["id"]  # tenant has no WABA id: no pre-check
+    graph.fail_with, graph.fail_status = {
+        "message": "(#132012) Parameter format does not match format in the created template", "code": 132012,
+        "error_data": {"details": "header: Format mismatch, expected IMAGE, received UNKNOWN"},
+    }, 400
+    await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/start", json={}, headers=ADMIN)
+    await drain()
+
+    detail = (await api.get(f"/admin/tenants/{tenant.id}/campaigns/{cid}", headers=ADMIN)).json()
+    assert detail["status"] == "paused" and "Format mismatch" in detail["pause_reason"] and "132012" in detail["pause_reason"]
+    assert detail["counts"]["pending"] == 3 and detail["counts"]["failed"] == 0  # nobody is blamed for our mistake
+    from app.models import Message
+
+    assert await db.scalar(select(Message).where(Message.status == "failed")) is None  # no failed template left in chats
+
+    graph.fail_with = None
+    assert (await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/start", json={}, headers=ADMIN)).status_code == 409
+    r = await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/resume", json={}, headers=ADMIN)
+    assert r.status_code == 200 and r.json()["status"] == "sending" and r.json()["pause_reason"] is None
+    await drain()
+    detail = (await api.get(f"/admin/tenants/{tenant.id}/campaigns/{cid}", headers=ADMIN)).json()
+    assert detail["status"] == "done" and detail["counts"]["sent"] == 3
+    assert (await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/resume", json={}, headers=ADMIN)).status_code == 409
+
+
+async def test_customer_level_failures_do_not_pause(api, tenant, db, graph):
+    cid = (await create(api, tenant.id, params=json.dumps([]))).json()["id"]
+    graph.fail_with, graph.fail_status = {"message": "Message undeliverable", "code": 131026}, 400
+    await api.post(f"/admin/tenants/{tenant.id}/campaigns/{cid}/start", json={}, headers=ADMIN)
+    await drain()
+    detail = (await api.get(f"/admin/tenants/{tenant.id}/campaigns/{cid}", headers=ADMIN)).json()
+    assert detail["status"] == "done" and detail["counts"]["failed"] == 3  # bad numbers are failed, campaign finishes

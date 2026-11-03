@@ -43,11 +43,16 @@ async def send_message(
     message: dict,
     *,
     by: str,
+    allow_outside_window: bool = False,
 ) -> Message:
-    """Send and log one message. `by` is bot | human | flow | system."""
+    """Send and log one message. `by` is bot | human | flow | system.
+
+    `allow_outside_window` lets Meta decide instead of our own 24h bookkeeping. Used after a missed
+    call, where it is not documented whether the call opens the customer service window.
+    """
     if contact.opted_out and by != "system":
         raise PermanentJobError("Contact opted out of messages")
-    if message.get("type") != "template" and not conv.is_playground and not sender.simulated and not in_service_window(contact):
+    if message.get("type") != "template" and not allow_outside_window and not conv.is_playground and not sender.simulated and not in_service_window(contact):
         raise OutsideServiceWindow("More than 24h since the customer's last message; use an approved template")
     body = describe(message)
     try:

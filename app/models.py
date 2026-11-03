@@ -287,3 +287,27 @@ class CampaignRecipient(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the customer writes back within REPLY_WINDOW of this campaign message.
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Call(TimestampMixin, Base):
+    """A WhatsApp voice call, built from Meta's "calls" webhook events."""
+
+    __tablename__ = "calls"
+    __table_args__ = (Index("ix_calls_tenant_started", "tenant_id", "started_at"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), index=True)
+    contact_id: Mapped[int | None] = mapped_column(ForeignKey("contacts.id", ondelete="SET NULL"))
+    wa_call_id: Mapped[str] = mapped_column(String(128), unique=True)
+    wa_id: Mapped[str] = mapped_column(String(32), index=True)
+    direction: Mapped[str] = mapped_column(String(20))  # USER_INITIATED | BUSINESS_INITIATED
+    # ringing | answered | missed | failed
+    outcome: Mapped[str] = mapped_column(String(20), default="ringing")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)
+    # Whether we sent the customer a WhatsApp message after missing their call.
+    followed_up: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    follow_up_note: Mapped[str | None] = mapped_column(String(300))

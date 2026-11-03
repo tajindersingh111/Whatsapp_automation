@@ -11,9 +11,9 @@ from app.connectors import build_connector
 from app.db import get_session
 from app.jobs import enqueue
 from app.models import CampaignRecipient, Message, StoreConnection
-from app.pipeline import serialize_inbound
+from app.pipeline import serialize_call, serialize_inbound
 from app.security import verify_meta_signature
-from app.whatsapp.webhook import parse_webhook
+from app.whatsapp.webhook import parse_calls, parse_webhook
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -37,7 +37,11 @@ async def meta_webhook(request: Request, session: AsyncSession = Depends(get_ses
     body = await request.body()
     if not verify_meta_signature(body, request.headers.get("x-hub-signature-256"), get_settings().meta_app_secret):
         raise HTTPException(status_code=401, detail="bad signature")
-    messages, statuses = parse_webhook(await request.json())
+    payload = await request.json()
+    for call in parse_calls(payload):
+        # One job per event: "connect" then "terminate" for the same call id.
+        await enqueue(session, "call_event", serialize_call(call), dedupe_key=f"call:{call.wa_call_id}:{call.event}"[:200], max_attempts=3)
+    messages, statuses = parse_webhook(payload)
     for m in messages:
         await enqueue(session, "inbound_message", serialize_inbound(m), dedupe_key=f"wamid:{m.wa_message_id}"[:200], max_attempts=5)
     for st in statuses:

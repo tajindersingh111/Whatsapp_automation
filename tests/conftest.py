@@ -133,6 +133,21 @@ class GraphFake:
             self.sent.append(body)
             return {"messages": [{"id": f"wamid.out.{len(self.sent)}"}]}
 
+        @self.app.get("/{version}/{phone_id}/settings")
+        async def get_settings(version: str, phone_id: str):
+            return {"calling": {"status": self.calling, "call_icon_visibility": "DEFAULT"}}
+
+        @self.app.post("/{version}/{phone_id}/settings")
+        async def post_settings(version: str, phone_id: str, request: Request):
+            body = await request.json()
+            wanted = body["calling"]["status"]
+            if wanted == "ENABLED" and self.calling_blocked:
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(status_code=400, content={"error": {"message": "Messaging limit too low to enable calling", "code": 100}})
+            self.calling = wanted
+            return {"success": True}
+
         @self.app.post("/{version}/{phone_id}/media")
         async def media(version: str, phone_id: str, request: Request):
             form = await request.form()
@@ -175,6 +190,8 @@ class GraphFake:
         self.templates: list[dict] = []
         self.subscribed: list[str] = []
         self.uploaded: list[dict] = []
+        self.calling = "DISABLED"
+        self.calling_blocked = False
 
 
 @pytest.fixture
@@ -299,6 +316,21 @@ def meta_payload(text_body: str | None = None, *, wamid: str, wa_id: str = CUSTO
                 ],
             }
         ],
+    }
+
+
+def call_payload(wa_id: str, call_id: str, event: str, *, name: str = "Caller", direction: str = "USER_INITIATED", **extra) -> dict:
+    """A Meta "calls" webhook for one call event."""
+    call = {"id": call_id, "from": wa_id, "to": "919000000000", "event": event, "direction": direction,
+            "timestamp": str(int(time.time())), **extra}
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{"id": "waba", "changes": [{"field": "calls", "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {"display_phone_number": "919000000000", "phone_number_id": PHONE_NUMBER_ID},
+            "contacts": [{"profile": {"name": name}, "wa_id": wa_id}],
+            "calls": [call],
+        }}]}],
     }
 
 

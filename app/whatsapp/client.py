@@ -458,3 +458,32 @@ def explain_error(text: str | None) -> dict | None:
         title, action = _EXPLANATIONS[code]
         return {"code": code, "title": title, "action": action, "customer_side": code in (ENGAGEMENT_CODE, 130472)}
     return None
+
+
+async def get_calling_settings(http: httpx.AsyncClient, graph_version: str, phone_number_id: str, access_token: str) -> dict:
+    """Current voice-calling settings of a business number."""
+    resp = await http.get(
+        f"https://graph.facebook.com/{graph_version}/{phone_number_id}/settings",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20,
+    )
+    data = _json(resp)
+    if resp.status_code >= 400:
+        err = data.get("error", {}) if isinstance(data, dict) else {}
+        raise WhatsAppError(f"Meta API {resp.status_code}: {err.get('message') or resp.text[:200]}", code=err.get("code"), status=resp.status_code)
+    return data.get("calling") or {}
+
+
+async def set_calling_enabled(http: httpx.AsyncClient, graph_version: str, phone_number_id: str, access_token: str, enabled: bool) -> dict:
+    """Turn the call button on or off for a business number. Meta needs a 2,000/day messaging limit to enable it."""
+    resp = await http.post(
+        f"https://graph.facebook.com/{graph_version}/{phone_number_id}/settings",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={"calling": {"status": "ENABLED" if enabled else "DISABLED", "call_icon_visibility": "DEFAULT"}},
+        timeout=20,
+    )
+    data = _json(resp)
+    if resp.status_code >= 400 or not data.get("success", True):
+        err = data.get("error", {}) if isinstance(data, dict) else {}
+        raise WhatsAppError(f"Meta API {resp.status_code}: {err.get('message') or resp.text[:300]}", code=err.get("code"), status=resp.status_code)
+    return data

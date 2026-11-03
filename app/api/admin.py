@@ -338,28 +338,72 @@ async def delete_correction(tenant_id: uuid.UUID, correction_id: int, session: A
 # --- inbox ---
 
 
+def _last_direction():
+    """Direction of the newest message in each conversation ('in' = the customer wrote last)."""
+    return (
+        select(Message.direction)
+        .where(Message.conversation_id == Conversation.id)
+        .order_by(Message.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+
+
+# Inbox views. "waiting" and "chatting" separate real conversations from campaign blasts nobody answered.
+INBOX_VIEWS = ("all", "waiting", "chatting", "human", "no_reply")
+
+
+def _apply_view(stmt, view: str):
+    if view == "waiting":  # customer wrote last: they are waiting for an answer
+        return stmt.where(_last_direction() == "in")
+    if view == "chatting":  # customer has written at least once
+        return stmt.where(Contact.last_inbound_at.is_not(None))
+    if view == "human":
+        return stmt.where(Conversation.mode == "human")
+    if view == "no_reply":  # we messaged them (campaign/template) and they never wrote back
+        return stmt.where(Contact.last_inbound_at.is_(None))
+    return stmt
+
+
+@router.get("/tenants/{tenant_id}/conversations/summary")
+async def conversations_summary(tenant_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> dict:
+    """How many conversations are in each inbox view, for the tab counts."""
+    base = (
+        select(func.count())
+        .select_from(Conversation)
+        .join(Contact, Contact.id == Conversation.contact_id)
+        .where(Conversation.tenant_id == tenant_id, Conversation.is_playground.is_(False))
+    )
+    return {view: (await session.scalar(_apply_view(base, view))) or 0 for view in INBOX_VIEWS}
+
+
 @router.get("/tenants/{tenant_id}/conversations")
 async def list_conversations(
-    tenant_id: uuid.UUID, mode: str | None = None, q: str = "", include_playground: bool = False, session: AsyncSession = Depends(get_session)
+    tenant_id: uuid.UUID, mode: str | None = None, view: str = "all", q: str = "", include_playground: bool = False,
+    session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    if view not in INBOX_VIEWS:
+        raise HTTPException(status_code=422, detail=f"view must be one of: {', '.join(INBOX_VIEWS)}")
     stmt = (
-        select(Conversation, Contact)
+        select(Conversation, Contact, _last_direction().label("last_direction"))
         .join(Contact, Contact.id == Conversation.contact_id)
         .where(Conversation.tenant_id == tenant_id)
-        .order_by(Conversation.last_message_at.desc().nulls_last())
-        .limit(100)
+        .limit(200)
     )
+    # Waiting customers: longest wait first. Everything else: most recent first.
+    stmt = stmt.order_by(Conversation.last_message_at.asc()) if view == "waiting" else stmt.order_by(Conversation.last_message_at.desc().nulls_last())
     if not include_playground:
         stmt = stmt.where(Conversation.is_playground.is_(False))
-    if mode:
+    if mode:  # kept for older links
         stmt = stmt.where(Conversation.mode == mode)
+    stmt = _apply_view(stmt, view)
     if q:
         stmt = stmt.where(or_(Contact.wa_id.ilike(f"%{q}%"), Contact.name.ilike(f"%{q}%")))
     rows = (await session.execute(stmt)).all()
     previews: dict[int, Message] = {}
     if rows:
         last_ids = (
-            select(func.max(Message.id)).where(Message.conversation_id.in_([c.id for c, _ in rows])).group_by(Message.conversation_id)
+            select(func.max(Message.id)).where(Message.conversation_id.in_([c.id for c, _, _ in rows])).group_by(Message.conversation_id)
         )
         for m in (await session.scalars(select(Message).where(Message.id.in_(last_ids)))).all():
             previews[m.conversation_id] = m
@@ -371,9 +415,12 @@ async def list_conversations(
             "last_message_at": c.last_message_at,
             "contact": {"id": ct.id, "wa_id": ct.wa_id, "name": ct.name, "lead_stage": ct.lead_stage, "lead_note": ct.lead_note, "source": ct.source},
             "can_reply": in_service_window(ct),
+            "replied": ct.last_inbound_at is not None,
+            "waiting": last_direction == "in",
             "preview": (previews[c.id].body[:120] if c.id in previews else ""),
+            "preview_from": (previews[c.id].sender if c.id in previews else None),
         }
-        for c, ct in rows
+        for c, ct, last_direction in rows
     ]
 
 

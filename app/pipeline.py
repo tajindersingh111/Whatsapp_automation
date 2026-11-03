@@ -15,7 +15,7 @@ from app.connectors import StoreError, build_connector
 from app.connectors.base import StoreConnector
 from app.jobs import Job, PermanentJobError, enqueue, handler
 from app.menu_bot import menu_followup, run_menu_bot
-from app.models import Campaign, Contact, Conversation, Message, Order, StoreConnection, Tenant, WebhookEvent, WhatsAppAccount
+from app.models import Call, Campaign, Contact, Conversation, Message, Order, StoreConnection, Tenant, WebhookEvent, WhatsAppAccount
 from app.services import campaigns as campaign_service
 from app.services import catalog
 from app.services.conversations import (
@@ -36,7 +36,7 @@ from app.services.orders import (
     upsert_order,
 )
 from app.whatsapp.client import Sender, text_message
-from app.whatsapp.webhook import InboundMessage
+from app.whatsapp.webhook import CallEvent, InboundMessage
 
 log = logging.getLogger(__name__)
 
@@ -442,3 +442,72 @@ async def handle_campaign_send(session: AsyncSession, job: Job) -> None:
     elif campaign.status == "sending":
         campaign.status = "done"
         campaign.finished_at = datetime.now(timezone.utc)
+
+
+# --- voice calls ---
+
+
+def serialize_call(c: CallEvent) -> dict:
+    return {
+        "phone_number_id": c.phone_number_id, "wa_call_id": c.wa_call_id, "event": c.event, "direction": c.direction,
+        "wa_id": c.wa_id, "timestamp": c.timestamp.isoformat(), "profile_name": c.profile_name, "status": c.status,
+        "started_at": c.started_at.isoformat() if c.started_at else None,
+        "ended_at": c.ended_at.isoformat() if c.ended_at else None,
+        "duration": c.duration, "error": c.error, "outcome": c.outcome,
+    }
+
+
+@handler("call_event")
+async def handle_call_event(session: AsyncSession, job: Job) -> None:
+    d = job.payload
+    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.phone_number_id == d["phone_number_id"]))
+    if account is None:
+        log.warning("call for unknown phone_number_id %s dropped", d["phone_number_id"])
+        return
+    tenant = await session.get(Tenant, account.tenant_id)
+    assert tenant is not None
+    when = datetime.fromisoformat(d["timestamp"])
+
+    call = await session.scalar(select(Call).where(Call.wa_call_id == d["wa_call_id"]))
+    if call is None:
+        call = Call(tenant_id=tenant.id, wa_call_id=d["wa_call_id"], wa_id=d["wa_id"], direction=d["direction"], started_at=when)
+        session.add(call)
+    if d["wa_id"]:
+        contact = await get_or_create_contact(session, tenant.id, d["wa_id"], d.get("profile_name"), source="whatsapp call")
+        call.contact_id = contact.id
+    call.outcome = d["outcome"]
+    call.error = d["error"]
+    if d["started_at"]:
+        call.answered_at = datetime.fromisoformat(d["started_at"])
+    if d["ended_at"]:
+        call.ended_at = datetime.fromisoformat(d["ended_at"])
+    if d["duration"]:
+        call.duration_seconds = int(d["duration"])
+    await session.flush()
+
+    if d["event"] == "terminate" and d["outcome"] == "missed" and d["direction"] == "USER_INITIATED":
+        await handle_missed_call(session, tenant, call)
+
+
+async def handle_missed_call(session: AsyncSession, tenant: Tenant, call: Call) -> None:
+    """Message a customer whose call we missed, so the lead isn't lost."""
+    cfg = load_config(tenant.config)
+    if not cfg.missed_call.enabled or call.followed_up or not call.contact_id:
+        return
+    contact = await session.get(Contact, call.contact_id)
+    if contact is None or contact.opted_out:
+        return
+    conv = await get_or_create_conversation(session, tenant.id, contact)
+    first = (contact.name or "").split(" ")[0] or "ji"
+    text = cfg.missed_call.text.replace("{name}", first).replace("{brand}", cfg.brand_name).replace("{hours}", cfg.support_hours)
+    sender = await sender_for(session, tenant, conv)
+    # Meta has not documented whether a call opens the 24h window, so let Meta decide rather than
+    # refusing locally; if it rejects the message, drop it instead of leaving a failed bubble in the chat.
+    msg = await send_message(session, sender, conv, contact, text_message(text), by="flow", allow_outside_window=True)
+    if msg.status == "failed":
+        call.follow_up_note = f"Could not auto-reply: {msg.error}"[:300]
+        await session.delete(msg)
+        log.info("missed call %s: Meta refused the auto-reply (%s)", call.id, msg.error)
+        return
+    call.followed_up = True
+    call.follow_up_note = "Auto-reply sent"

@@ -29,6 +29,13 @@ class ShippingUpdateFlow(BaseModel):
     template_language: str = "en"
 
 
+class MissedCallFlow(BaseModel):
+    """When a customer calls and nobody picks up, send them a WhatsApp message."""
+
+    enabled: bool = True
+    text: str = "Hi {name}! Aapka call miss ho gaya 🙏 Bataiye kya chahiye, hum yahin reply kar denge."
+
+
 class LeadFollowupFlow(BaseModel):
     enabled: bool = True
     after_hours: float = 3
@@ -80,6 +87,7 @@ class BotConfig(BaseModel):
     cod_confirmation: CodConfirmationFlow = Field(default_factory=CodConfirmationFlow)
     shipping_update: ShippingUpdateFlow = Field(default_factory=ShippingUpdateFlow)
     lead_followup: LeadFollowupFlow = Field(default_factory=LeadFollowupFlow)
+    missed_call: MissedCallFlow = Field(default_factory=MissedCallFlow)
 
 
 def load_config(raw: dict | None) -> BotConfig:

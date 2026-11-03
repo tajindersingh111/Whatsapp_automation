@@ -167,6 +167,8 @@
   .list .scroll { max-height: calc(100vh - 230px); overflow: auto; }
   .list-item { display: flex; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .list-item:hover, .list-item.active { background: var(--primary-soft); }
+  .list-item.waiting { border-left: 3px solid var(--accent); }
+  .avatar.warm { background: var(--ok-soft); color: var(--ok); }
   .avatar { width: 38px; height: 38px; border-radius: 99px; background: var(--primary-soft); color: var(--primary); display: grid; place-items: center; font-weight: 700; flex: none; }
   .list-item .meta { min-width: 0; flex: 1; }
   .list-item .meta .top { display: flex; gap: 6px; align-items: center; }
@@ -239,6 +241,7 @@ const ICONS = {
   leads: '<path d="M4 4h16l-6 7.5V19l-4 1v-8.5z"/>',
   training: '<path d="M12 3l9 4.5-9 4.5-9-4.5z"/><path d="M7 10v4.5c0 1.4 2.2 3 5 3s5-1.6 5-3V10"/>',
   playground: '<rect x="3" y="6" width="18" height="12" rx="4"/><path d="M8 10v4M6 12h4"/><circle cx="15.5" cy="11" r="1"/><circle cx="17.5" cy="13" r="1"/>',
+  calls: '<path d="M6.5 3h-3a1 1 0 0 0-1 1.1A17 17 0 0 0 19.9 21.5a1 1 0 0 0 1.1-1v-3a1 1 0 0 0-.8-1l-3-.6a1 1 0 0 0-1 .4l-1 1.4a13 13 0 0 1-5.4-5.4l1.4-1a1 1 0 0 0 .4-1l-.6-3a1 1 0 0 0-1-.8z"/>',
   setup: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
 };
@@ -249,6 +252,7 @@ const PAGES = [
   { id: "inbox", label: "Inbox", sub: "Every WhatsApp conversation" },
   { id: "audience", label: "Audience", sub: "Who reads, who replies, and who costs you money" },
   { id: "campaigns", label: "Bulk messages", sub: "Send approved templates to your customer list" },
+  { id: "calls", label: "Calls", sub: "Incoming WhatsApp calls, missed calls and talk time" },
   { id: "leads", label: "Leads & orders", sub: "Buying stage of every customer" },
   { group: "Bot" },
   { id: "training", label: "Bot training", sub: "Teach the bot your brand, policies and answers" },
@@ -371,7 +375,7 @@ function shell() {
   </div>`;
   $("#nav").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-tab]"); if (!b) return;
-    tab = b.dataset.tab; store.set("wa_tab", tab); openCampaign = null; openConv = null; audienceFilter = { segment: null, q: "", campaign: null };
+    tab = b.dataset.tab; store.set("wa_tab", tab); openCampaign = null; openConv = null; audienceFilter = { segment: null, q: "", campaign: null }; inboxQuery = "";
     $("#app").classList.remove("open"); render();
   });
   $("#burger").onclick = () => $("#app").classList.toggle("open");
@@ -424,7 +428,8 @@ const empty = (title, text, action = "") => `<div class="empty"><div class="big"
 
 /* ---------- Overview ---------- */
 views.overview = async (el) => {
-  const [a, aud, camps] = await Promise.all([api(T("/analytics?days=30")), api(T("/audience?limit=1")), api(T("/campaigns"))]);
+  const [a, aud, camps, callData] = await Promise.all([api(T("/analytics?days=30")), api(T("/audience?limit=1")), api(T("/campaigns")), api(T("/calls?days=30&limit=1"))]);
+  const callSummary = callData.summary;
   const kpi = (l, v, s = "", accent = false) => `<div class="kpi ${accent ? "accent" : ""}"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
   const sum = aud.summary;
   const reached = Object.entries(sum).filter(([k]) => k !== "excluded").reduce((s, [, n]) => s + n, 0);
@@ -443,6 +448,7 @@ views.overview = async (el) => {
     ${kpi("Bot replies", a.bot_replies, a.human_replies ? `${a.human_replies} by your team` : "")}
     ${kpi("Needs a human", a.open_handoffs, "open handoffs", a.open_handoffs > 0)}
     ${kpi("Orders via bot", a.orders_by_bot.count, inr(a.orders_by_bot.revenue))}
+    ${kpi("Missed calls", callSummary.missed, callSummary.incoming ? `${callSummary.incoming} calls received` : "last 30 days", callSummary.missed > 0)}
   </div>
   <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
     ${card("Campaign performance", `${camps.length} campaigns`, sentAll ? `
@@ -459,6 +465,7 @@ views.overview = async (el) => {
 function navigate(to, filter) {
   tab = to; store.set("wa_tab", tab); openCampaign = null; openConv = null;
   audienceFilter = { segment: null, q: "", campaign: null, ...(filter || {}) };
+  if (to === "inbox") inboxView = "all";
   render();
 }
 
@@ -538,25 +545,47 @@ views.audience = async (el) => {
 
 /* ---------- Inbox ---------- */
 let openConv = null;
-let inboxMode = "";
+let inboxView = "all";
+let inboxQuery = "";
+const INBOX_TABS = [
+  ["waiting", "Waiting for you", "Customer wrote last and nobody has answered. Longest wait first."],
+  ["chatting", "In conversation", "Customers who have written to you at least once."],
+  ["human", "Needs human", "The bot handed these over to your team."],
+  ["no_reply", "No reply yet", "They got a message from you but never wrote back."],
+  ["all", "All", "Every conversation."],
+];
 views.inbox = async (el) => {
-  const convs = await api(T(`/conversations${inboxMode ? "?mode=" + inboxMode : ""}`));
+  const qs = new URLSearchParams({ view: inboxView });
+  if (inboxQuery) qs.set("q", inboxQuery);
+  const [convs, counts] = await Promise.all([api(T(`/conversations?${qs}`)), api(T("/conversations/summary"))]);
+  const tab = INBOX_TABS.find((t) => t[0] === inboxView);
   el.innerHTML = `<div class="split">
     <div class="card list">
-      <div class="tabsbar">${[["", "All"], ["human", "Needs human"], ["bot", "Bot"]].map(([m, l]) => `<button class="${inboxMode === m ? "primary" : "ghost"} sm" data-mode="${m}">${l}</button>`).join("")}</div>
+      <div class="tabsbar" style="flex-wrap:wrap">${INBOX_TABS.map(([v, l, tip]) => `<button class="${inboxView === v ? "primary" : "ghost"} sm" data-view="${v}" title="${esc(tip)}">${l}${counts[v] ? ` <span class="${inboxView === v ? "" : "muted"}">${counts[v]}</span>` : ""}</button>`).join("")}</div>
+      <div style="padding:0 10px 10px"><input id="inbox_q" placeholder="Search name or number" value="${esc(inboxQuery)}"></div>
       <div class="scroll">${convs.map((c) => `
-        <div class="list-item ${c.id === openConv ? "active" : ""}" data-conv="${c.id}">
-          <span class="avatar">${esc(initials(c.contact.name, c.contact.wa_id))}</span>
+        <div class="list-item ${c.id === openConv ? "active" : ""} ${c.waiting ? "waiting" : ""}" data-conv="${c.id}">
+          <span class="avatar ${c.replied ? "warm" : ""}">${esc(initials(c.contact.name, c.contact.wa_id))}</span>
           <div class="meta"><div class="top"><b>${esc(c.contact.name || "+" + c.contact.wa_id)}</b><span class="spacer" style="flex:1"></span><span class="muted small">${ago(c.last_message_at)}</span></div>
-            <div class="preview">${esc(c.preview)}</div>
-            <div class="row" style="gap:6px;margin-top:4px"><span class="pill ${c.mode}">${c.mode === "human" ? "needs human" : "bot"}</span><span class="pill">${esc(c.contact.lead_stage.replace("_", " "))}</span></div>
+            <div class="preview">${c.preview_from && c.preview_from !== "customer" ? `<span class="muted">You: </span>` : ""}${esc(c.preview)}</div>
+            <div class="row" style="gap:6px;margin-top:4px">
+              ${c.waiting ? `<span class="pill warn">waiting for reply</span>` : ""}
+              <span class="pill ${c.mode}">${c.mode === "human" ? "needs human" : "bot"}</span>
+              <span class="pill">${esc(c.contact.lead_stage.replace("_", " "))}</span>
+              ${!c.replied ? `<span class="pill" title="Only messages from you so far">no reply yet</span>` : ""}
+              ${c.replied && !c.can_reply ? `<span class="pill" title="More than 24h since their last message: only templates can be sent">window closed</span>` : ""}
+            </div>
             ${c.handoff_reason ? `<div class="small" style="color:var(--warn);margin-top:4px">${esc(c.handoff_reason)}</div>` : ""}
           </div>
-        </div>`).join("") || empty("No conversations", inboxMode ? "Nothing in this view." : "When customers message your WhatsApp number, chats appear here.")}</div>
+        </div>`).join("") || empty("Nothing here", inboxQuery ? "No conversation matches that search." : (tab ? tab[2] : "") + " Nothing in this view yet.")}</div>
     </div>
     <div class="card" id="conv_panel">${empty("Pick a conversation", "Read the chat, take over from the bot, or teach it a better answer.")}</div>
   </div>`;
-  el.querySelectorAll("[data-mode]").forEach((b) => b.onclick = () => { inboxMode = b.dataset.mode; render(); });
+  el.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => { inboxView = b.dataset.view; openConv = null; render(); });
+  let qt;
+  const box = $("#inbox_q", el);
+  box.oninput = (e) => { clearTimeout(qt); qt = setTimeout(() => { inboxQuery = e.target.value.trim(); render(); }, 350); };
+  if (inboxQuery) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   el.querySelectorAll("[data-conv]").forEach((d) => d.onclick = () => { openConv = Number(d.dataset.conv); render(); });
   const c = convs.find((x) => x.id === openConv);
   if (!c) return;
@@ -676,6 +705,64 @@ views.leads = async (el) => {
       <td class="muted">${esc(o.created_via)}</td>
       <td>${esc(o.status)}${o.tracking?.awb ? `<br><span class="muted small">${esc(o.tracking.courier || "")} ${esc(o.tracking.awb)}</span>` : ""}</td></tr>`).join("")}
   </table></div>` : empty("No orders yet", "Orders from your store and from the bot show up here."));
+};
+
+/* ---------- Calls ---------- */
+let callFilter = null;
+const CALL_UI = {
+  answered: { c: "var(--ok)", label: "Answered", d: "Someone picked up." },
+  missed: { c: "var(--accent)", label: "Missed", d: "Nobody picked up. The bot can message them automatically." },
+  failed: { c: "var(--danger)", label: "Failed", d: "The call could not connect." },
+  ringing: { c: "var(--muted)", label: "Ringing", d: "Started but no end event yet." },
+};
+const mmss = (sec) => !sec ? "-" : `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+
+views.calls = async (el) => {
+  const [data, calling] = await Promise.all([
+    api(T(`/calls?days=30${callFilter ? "&outcome=" + callFilter : ""}`)),
+    api(T("/calling")),
+  ]);
+  const s = data.summary;
+  const on = calling.status === "ENABLED";
+  const kpi = (l, v, sub = "") => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div>${sub ? `<div class="s">${sub}</div>` : ""}</div>`;
+  el.innerHTML = `
+  <div class="callout ${on ? "info" : ""}" style="align-items:center">
+    <div class="t"><b>Calling on WhatsApp is ${calling.available ? (on ? "ON" : "OFF") : "not available yet"}.</b>
+      <span class="muted small">${calling.available
+        ? (on ? "Customers see a call button on your WhatsApp chat." : "Turn it on so customers can call you from WhatsApp. Meta needs your messaging limit to be at least 2,000 customers/day.")
+        : esc(calling.note || "")}</span>
+      ${calling.restrictions?.length ? `<br><span class="error small">Meta has paused: ${calling.restrictions.map(esc).join(", ")}</span>` : ""}</div>
+    ${calling.available ? `<button class="${on ? "secondary" : "accent"}" id="call_toggle">${on ? "Turn calling off" : "Turn calling on"}</button>` : ""}
+  </div>
+  <div class="kpis">
+    ${kpi("Calls received", s.incoming, "last 30 days")}
+    ${kpi("Answered", s.answered, s.answer_rate !== null ? `${s.answer_rate}% of calls answered` : "")}
+    ${kpi("Missed", s.missed, s.auto_replied ? `${s.auto_replied} got an auto-reply` : "nobody picked up")}
+    ${kpi("Talk time", s.talk_minutes + "m")}
+    ${kpi("Failed", s.failed)}
+  </div>
+  <div class="segs">${Object.entries(CALL_UI).map(([k, u]) => `<button class="seg ${callFilter === k ? "on" : ""}" data-call="${k}" style="--c:${u.c}"><span class="lbl">${u.label}</span><span class="n">${s[k] || 0}</span><span class="d">${u.d}</span></button>`).join("")}</div>
+  ${card(callFilter ? CALL_UI[callFilter].label + " calls" : "Call log", `${data.calls.length} calls in the last ${data.days} days`, data.calls.length ? `<div class="table-wrap"><table>
+      <tr><th>Customer</th><th>When</th><th>Result</th><th>Duration</th><th>Follow-up</th><th></th></tr>
+      ${data.calls.map((c) => `<tr>
+        <td><div class="row" style="flex-wrap:nowrap"><span class="avatar">${esc(initials(c.name, c.wa_id))}</span><span class="who"><b>${esc(c.name || "Unknown")}</b><span class="muted small">+${esc(c.wa_id)}${c.incoming ? "" : " · you called"}</span></span></div></td>
+        <td class="muted">${ago(c.started_at)}</td>
+        <td><span class="pill" style="color:${CALL_UI[c.outcome]?.c}">${esc(CALL_UI[c.outcome]?.label || c.outcome)}</span>${c.error ? `<br><span class="error small">${esc(c.error)}</span>` : ""}</td>
+        <td>${mmss(c.duration_seconds)}</td>
+        <td class="muted small">${c.followed_up ? "✅ auto-reply sent" : esc(c.follow_up_note || "")}</td>
+        <td><button class="ghost sm" data-chat="${esc(c.wa_id)}">Open chat</button></td>
+      </tr>`).join("")}
+    </table></div>` : empty("No calls yet", calling.available && !on ? "Turn calling on so customers can call you from WhatsApp." : "Calls to your WhatsApp number will appear here."),
+    callFilter ? `<button class="ghost" id="call_clear">Clear filter</button>` : "")}`;
+  el.querySelectorAll("[data-call]").forEach((b) => b.onclick = () => { callFilter = callFilter === b.dataset.call ? null : b.dataset.call; render(); });
+  const clear = $("#call_clear", el); if (clear) clear.onclick = () => { callFilter = null; render(); };
+  el.querySelectorAll("[data-chat]").forEach((b) => b.onclick = () => { inboxQuery = b.dataset.chat; navigate("inbox"); });
+  const toggle = $("#call_toggle", el);
+  if (toggle) toggle.onclick = async () => {
+    toggle.disabled = true;
+    try { await api(T("/calling"), { method: "POST", body: { enabled: !on } }); toast(on ? "Calling turned off" : "Calling turned on"); render(); }
+    catch (err) { toast(err.message, true); toggle.disabled = false; }
+  };
 };
 
 /* ---------- Bulk messages ---------- */
@@ -989,6 +1076,7 @@ views.training = async (el) => {
       <div><label>Tone</label><textarea id="c_tone">${esc(cfg.tone)}</textarea></div>
       <div><label>Language</label><textarea id="c_lang">${esc(cfg.language)}</textarea></div>
     </div>
+    <p><label>Message sent after a missed call ({name}, {brand}, {hours})</label><textarea id="c_misstext">${esc(cfg.missed_call.text)}</textarea></p>
     <p><label>Rules (one per line)</label><textarea id="c_rules">${esc(cfg.rules.join("\n"))}</textarea></p>
     <p><label>Offers (one per line: CODE | description)</label><textarea id="c_offers">${esc(cfg.offers.map((o) => `${o.code} | ${o.description}`).join("\n"))}</textarea></p>
     <p><label>Always hand over to a human for (comma separated)</label><input id="c_handoff" value="${esc(cfg.handoff_triggers.join(", "))}"></p>
@@ -998,6 +1086,7 @@ views.training = async (el) => {
       <label class="check"><input type="checkbox" id="c_codflow" ${cfg.cod_confirmation.enabled ? "checked" : ""}> COD confirmation for website orders</label>
       <label class="check"><input type="checkbox" id="c_ship" ${cfg.shipping_update.enabled ? "checked" : ""}> Shipping updates</label>
       <label class="check"><input type="checkbox" id="c_follow" ${cfg.lead_followup.enabled ? "checked" : ""}> Follow up silent leads</label>
+      <label class="check"><input type="checkbox" id="c_miss" ${cfg.missed_call.enabled ? "checked" : ""}> Message customers whose call we missed</label>
     </div>
     <details style="margin-top:12px"><summary>Advanced (templates, timings, model) as JSON</summary>
       <textarea id="c_json" style="min-height:240px;font-family:ui-monospace,monospace;font-size:12px">${esc(JSON.stringify(cfg, null, 2))}</textarea>
@@ -1044,6 +1133,7 @@ views.training = async (el) => {
       cod_confirmation: { ...base.cod_confirmation, enabled: $("#c_codflow", el).checked },
       shipping_update: { ...base.shipping_update, enabled: $("#c_ship", el).checked },
       lead_followup: { ...base.lead_followup, enabled: $("#c_follow", el).checked },
+      missed_call: { ...base.missed_call, enabled: $("#c_miss", el).checked, text: $("#c_misstext", el).value },
     };
     try { await api(T("/config"), { method: "PUT", body }); toast("Saved. The bot uses it from the next message."); render(); } catch (err) { toast(err.message, true); }
   };

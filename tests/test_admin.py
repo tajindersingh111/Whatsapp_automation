@@ -2,6 +2,9 @@ from sqlalchemy import select
 
 from app.models import Job, StoreConnection
 from app.security import decrypt_json
+from app.services.conversations import get_or_create_contact, get_or_create_conversation
+from app.services.messaging import send_message, sender_for
+from app.whatsapp.client import template_message
 from tests.conftest import ADMIN, FakeLLM, drain, msg, text_block, tool_block
 
 
@@ -161,3 +164,41 @@ async def test_rename_pause_and_delete_brand(api, db, http):
     assert ok.status_code == 200
     assert (await api.get(f"/admin/tenants/{tid}", headers=ADMIN)).status_code == 404
     assert (await api.get("/admin/tenants", headers=ADMIN)).json() == []
+
+
+async def test_inbox_views_separate_real_conversations(api, tenant, db, graph, fake_llm):
+    from tests.conftest import drain, meta_payload, post_meta
+
+    fake_llm.script = [msg(text_block("Ji bataiye")), msg(text_block("Theek hai"))]
+    # Two customers write in; the bot answers both.
+    await post_meta(api, meta_payload("rate kya hai?", wamid="w.a1", wa_id="919861000001", name="Chatty"))
+    await post_meta(api, meta_payload("hello", wamid="w.b1", wa_id="919861000002", name="Waiting"))
+    await drain()
+    # A campaign-style message to someone who never writes back.
+    silent = await get_or_create_contact(db, tenant.id, "919861000003", "Silent", source="campaign: Diwali")
+    conv = await get_or_create_conversation(db, tenant.id, silent)
+    blast = template_message("diwali_offer", "en", ["Silent"])  # campaigns always send templates
+    await send_message(db, await sender_for(db, tenant, conv), conv, silent, blast, by="campaign")
+    await db.commit()
+
+    view = lambda v: api.get(f"/admin/tenants/{tenant.id}/conversations?view={v}", headers=ADMIN)
+    phones = lambda r: {c["contact"]["wa_id"] for c in r.json()}
+
+    assert phones(await view("all")) == {"919861000001", "919861000002", "919861000003"}
+    assert phones(await view("chatting")) == {"919861000001", "919861000002"}  # they wrote to us
+    assert phones(await view("no_reply")) == {"919861000003"}  # only we wrote
+    assert phones(await view("waiting")) == set()  # the bot answered everyone
+
+    # The second customer writes again; the bot is off, so nobody answers: they are waiting.
+    await api.post(f"/admin/tenants/{tenant.id}/conversations/{(await view('chatting')).json()[0]['id']}/mode", json={"mode": "human"}, headers=ADMIN)
+    await post_meta(api, meta_payload("koi hai?", wamid="w.b2", wa_id="919861000002", name="Waiting"))
+    await drain()
+    waiting = (await view("waiting")).json()
+    assert [c["contact"]["wa_id"] for c in waiting] == ["919861000002"]
+    assert waiting[0]["waiting"] is True and waiting[0]["replied"] is True and waiting[0]["preview"] == "koi hai?"
+
+    summary = (await api.get(f"/admin/tenants/{tenant.id}/conversations/summary", headers=ADMIN)).json()
+    assert summary == {"all": 3, "waiting": 1, "chatting": 2, "human": 1, "no_reply": 1}
+    assert (await view("human")).json()[0]["mode"] == "human"
+    assert phones(await api.get(f"/admin/tenants/{tenant.id}/conversations?view=all&q=Silent", headers=ADMIN)) == {"919861000003"}
+    assert (await view("nonsense")).status_code == 422

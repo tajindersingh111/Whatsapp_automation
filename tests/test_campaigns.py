@@ -36,6 +36,54 @@ def test_parse_csv_variants():
         parse_csv(b"name,city\nA,B\n")
 
 
+def test_parse_csv_finds_the_phone_column_in_a_real_export():
+    """A shop's own export: no header, a serial number first, the phone buried in the 5th column."""
+    export = (
+        "500,VRINDAVAN FABRICS,08CNJPP8680B1ZM,\"8 RAGHUNATH PURI, JAIPUR 302029\",8302925988,Mob.\n"
+        "501,K.G.N.FASHION,29AOZPK4769H1ZX,\"33 CHANNAPPA MANSION, BENGALURU 560053\",9887423293,Mob.\n"
+    ).encode()
+    parsed = parse_csv(export)
+    assert [r["phone"] for r in parsed.rows] == ["918302925988", "919887423293"]
+    assert [r["name"] for r in parsed.rows] == ["VRINDAVAN FABRICS", "K.G.N.FASHION"]
+    assert parsed.phone_column == "phone" and parsed.invalid == []
+    # The serial numbers and the addresses also contain digits, and must not win the column.
+    assert parsed.columns[0] == "column1" and parsed.columns[4] == "phone"
+
+
+def test_parse_csv_ignores_a_misleading_header():
+    """"contact" is the contact person here, not the phone; the numbers are under "tel"."""
+    parsed = parse_csv(b"contact,tel\nAsha Devi,9876543210\nRahul,9811122233\n")
+    assert [r["phone"] for r in parsed.rows] == ["919876543210", "919811122233"]
+    assert parsed.phone_column == "tel" and parsed.rows[0]["vars"]["contact"] == "Asha Devi"
+
+
+def test_empty_csv_message_names_the_column_and_spots_excel_damage():
+    from app.services.campaigns import explain_empty_csv
+
+    parsed = parse_csv(b"name,phone\nAsha,12345\nRahul,678\n")
+    message = explain_empty_csv(parsed)
+    assert "'phone'" in message and "12345" in message
+
+    broken = parse_csv(b"name,phone\nAsha,9.19672E+11\nRahul,9.18302E+11\n")
+    assert "scientific notation" in explain_empty_csv(broken)
+
+
+async def test_csv_preview_reports_what_the_server_will_use(api, tenant):
+    """The dashboard shows these columns, so they must be the ones the server reads."""
+    export = b"500,VRINDAVAN FABRICS,08CNJPP8680B1ZM,8302925988\n501,K.G.N.FASHION,29AOZPK4769H1ZX,9887423293\n502,BAD ROW,08AEZFS5470F1ZB,12345\n"
+    r = await api.post(f"/admin/tenants/{tenant.id}/campaigns/preview",
+                       files={"file": ("501.csv", export, "text/csv")}, headers=ADMIN)
+    body = r.json()
+    assert r.status_code == 200, body
+    assert body["valid"] == 2 and body["invalid"] == 1 and body["invalid_samples"] == ["12345"]
+    assert body["phone_column"] == "phone" and "phone" in body["columns"] and "name" in body["columns"]
+    assert body["samples"][0] == {"phone": "918302925988", "name": "VRINDAVAN FABRICS"}
+
+    bad = await api.post(f"/admin/tenants/{tenant.id}/campaigns/preview",
+                         files={"file": ("x.csv", b"name,city\nAsha,Jaipur\n", "text/csv")}, headers=ADMIN)
+    assert bad.status_code == 422 and "phone" in bad.json()["detail"]
+
+
 def test_resolve_params_never_empty():
     specs = [
         {"source": "column", "value": "Name", "fallback": "Customer"},

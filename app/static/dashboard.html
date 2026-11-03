@@ -900,13 +900,23 @@ async function campaignForm(el) {
   $("#cp_mcount", el).oninput = drawParams;
   $("#cp_file", el).onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    const text = await file.text();
-    const first = text.replace(/^﻿/, "").split(/\r?\n/)[0] || "";
-    const cells = first.split(first.includes(";") && !first.includes(",") ? ";" : ",").map((c) => c.trim().replace(/^"|"$/g, ""));
-    const headerless = cells.some((c) => c.replace(/\D/g, "").length >= 10);
-    columns = headerless ? ["phone", "name"] : cells;
-    const rows = text.split(/\r?\n/).filter((l) => l.trim()).length - (headerless ? 0 : 1);
-    $("#cp_cols", el).textContent = `${rows} rows · columns: ${columns.join(", ")}`;
+    // The server reads the file, so the columns shown here are exactly the ones it will use.
+    const out = $("#cp_cols", el);
+    out.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:middle"></span> Reading the file…`;
+    const fd = new FormData(); fd.append("file", file);
+    try {
+      const p = await apiForm(T("/campaigns/preview"), fd);
+      columns = p.columns;
+      const bits = [`<b>${p.valid}</b> numbers found in the “${esc(p.phone_column)}” column`];
+      if (p.duplicates) bits.push(`${p.duplicates} duplicate`);
+      if (p.invalid) bits.push(`${p.invalid} unusable${p.invalid_samples.length ? ` (${p.invalid_samples.map(esc).join(", ")})` : ""}`);
+      bits.push(`columns: ${columns.map(esc).join(", ")}`);
+      out.innerHTML = bits.join(" · ")
+        + (p.samples.length ? `<br>e.g. ${p.samples.map((s) => "+" + esc(s.phone) + (s.name ? " " + esc(s.name) : "")).join(" · ")}` : "");
+    } catch (err) {
+      columns = [];
+      out.innerHTML = `<span class="error">${esc(err.message)}</span>`;
+    }
     drawParams();
   };
   drawParams();

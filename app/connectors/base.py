@@ -160,6 +160,8 @@ def normalize_phone(raw: str | None, default_country_code: str = "91") -> str:
     digits = re.sub(r"\D", "", raw or "")
     if not digits:
         return ""
+    if digits.startswith("00"):  # 0091... is the international prefix written out
+        digits = digits[2:]
     if len(digits) == 11 and digits.startswith("0"):
         digits = digits[1:]
     if len(digits) == 10:

@@ -169,6 +169,27 @@ async def upload_campaign_image(tenant_id: uuid.UUID, file: UploadFile = File(..
     return {"media_id": await _upload_image(account, data, file.filename or "header.jpg"), "sandbox": False}
 
 
+@router.post("/campaigns/preview")
+async def preview_csv(tenant_id: uuid.UUID, file: UploadFile = File(...), session: AsyncSession = Depends(get_session)) -> dict:
+    """Read a customer list and report what we found, so the dashboard shows the same columns we will use."""
+    await _tenant(session, tenant_id)
+    try:
+        parsed = svc.parse_csv(await file.read())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not parsed.rows:
+        raise HTTPException(status_code=422, detail=svc.explain_empty_csv(parsed))
+    return {
+        "columns": parsed.columns,
+        "phone_column": parsed.phone_column,
+        "valid": len(parsed.rows),
+        "invalid": len(parsed.invalid),
+        "duplicates": parsed.duplicates,
+        "invalid_samples": [v for v in parsed.invalid if v != "(empty)"][:5],
+        "samples": [{"phone": r["phone"], "name": r["name"]} for r in parsed.rows[:3]],
+    }
+
+
 @router.get("/templates")
 async def templates(tenant_id: uuid.UUID, scan: bool = False, session: AsyncSession = Depends(get_session)) -> dict:
     await _tenant(session, tenant_id)
@@ -247,7 +268,7 @@ async def create_campaign(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not parsed.rows:
-        raise HTTPException(status_code=422, detail=f"No valid phone numbers found ({len(parsed.invalid)} invalid)")
+        raise HTTPException(status_code=422, detail=svc.explain_empty_csv(parsed))
     missing = [p["value"] for p in specs if p["source"] == "column" and p["value"] not in parsed.columns]
     if missing:
         raise HTTPException(status_code=422, detail=f"CSV has no column named: {', '.join(missing)}")

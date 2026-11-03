@@ -28,6 +28,8 @@ log = logging.getLogger(__name__)
 
 MAX_RECIPIENTS = 10_000
 MAX_CSV_BYTES = 5 * 1024 * 1024
+SNIFF_ROWS = 200  # rows read when working out which column is which
+_SCIENTIFIC = re.compile(r"^\d(?:\.\d+)?[eE]\+?\d+$")  # what Excel does to a 12-digit number
 BATCH_SIZE = 50
 REPLY_WINDOW = timedelta(days=7)
 CLOCK_SKEW = timedelta(minutes=2)
@@ -43,12 +45,17 @@ class ParsedCsv:
     rows: list[dict]  # {"phone": "...", "name": "...", "vars": {...}}
     invalid: list[str] = field(default_factory=list)
     duplicates: int = 0
+    phone_column: str = ""  # which column the numbers were read from, so the UI can say so
 
 
 def valid_phone(digits: str) -> bool:
     if digits.startswith("91"):
         return len(digits) == 12 and digits[2] in "6789"
     return 10 <= len(digits) <= 15
+
+
+def phone_like(value: str) -> bool:
+    return valid_phone(normalize_phone(value))
 
 
 def _decode(raw: bytes) -> str:
@@ -60,8 +67,45 @@ def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _column(body: list[list[str]], index: int) -> list[str]:
+    return [row[index].strip() for row in body[:SNIFF_ROWS] if index < len(row) and row[index].strip()]
+
+
+def _phone_score(body: list[list[str]], index: int) -> float:
+    """What share of this column's filled cells are usable phone numbers."""
+    sample = _column(body, index)
+    return sum(phone_like(v) for v in sample) / len(sample) if sample else 0.0
+
+
+def _pick_phone_column(body: list[list[str]], width: int) -> int | None:
+    """Find the phone column by what is in it. Export files often start with serial numbers or
+    IDs, and the numbers can sit in any column, so the best column wins - not the first."""
+    best, best_score = None, 0.0
+    for i in range(width):
+        score = _phone_score(body, i)
+        if score > best_score:  # strictly greater, so the leftmost of equal columns wins
+            best, best_score = i, score
+    return best if best_score >= 0.5 else None
+
+
+def _pick_name_column(body: list[list[str]], width: int, phone_idx: int) -> int | None:
+    """A column of plain names: text, no digits, filled in for most rows."""
+    filled = min(len(body), SNIFF_ROWS)
+    for i in range(width):
+        if i == phone_idx:
+            continue
+        sample = _column(body, i)
+        if len(sample) < filled / 2:
+            continue
+        looks_like_names = sum(len(v) <= 60 and re.fullmatch(r"[^\W\d_][^\d]*", v) is not None for v in sample)
+        if looks_like_names >= len(sample) * 0.8:
+            return i
+    return None
+
+
 def parse_csv(raw: bytes) -> ParsedCsv:
-    """Read a customer list. A header row is optional; without one, column 1 = phone, column 2 = name."""
+    """Read a customer list. A header row is optional, and the phone column may be anywhere:
+    with a header we trust a column named "phone"/"mobile"/..., otherwise we find it by content."""
     if len(raw) > MAX_CSV_BYTES:
         raise ValueError("CSV is larger than 5 MB")
     text = _decode(raw)
@@ -75,26 +119,33 @@ def parse_csv(raw: bytes) -> ParsedCsv:
 
     first = [c.strip() for c in table[0]]
     has_header = not any(len(re.sub(r"\D", "", c)) >= 10 for c in first)
+    width = max(len(r) for r in table)
     if has_header:
-        columns = [c or f"column{i + 1}" for i, c in enumerate(first)]
+        columns = [c or f"column{i + 1}" for i, c in enumerate(first)] + [f"column{i + 1}" for i in range(len(first), width)]
         body = table[1:]
     else:
-        columns = ["phone", "name"] + [f"column{i + 1}" for i in range(2, max(len(r) for r in table))]
+        columns = [f"column{i + 1}" for i in range(width)]
         body = table
-    lowered = [c.lower() for c in columns]
-    phone_idx = next((lowered.index(h) for h in _PHONE_HEADERS if h in lowered), None)
-    if phone_idx is None:
-        # Fall back to the first column that mostly contains phone-like values.
-        for i in range(len(columns)):
-            sample = [r[i] for r in body[:20] if i < len(r)]
-            if sample and sum(len(re.sub(r"\D", "", v)) >= 10 for v in sample) >= len(sample) / 2:
-                phone_idx = i
-                break
-    if phone_idx is None:
-        raise ValueError("Could not find a phone number column (name it 'phone')")
-    name_idx = next((lowered.index(h) for h in _NAME_HEADERS if h in lowered), None)
 
-    parsed = ParsedCsv(columns=columns, rows=[])
+    lowered = [c.lower() for c in columns]
+    named = next((lowered.index(h) for h in _PHONE_HEADERS if h in lowered), None)
+    # A header only wins if its column really holds numbers: "contact" is often a person, not a phone.
+    phone_idx = named if named is not None and _phone_score(body, named) >= 0.5 else _pick_phone_column(body, width)
+    if phone_idx is None:
+        phone_idx = named
+    if phone_idx is None:
+        preview = ", ".join(f"{c}={v!r}" for c, v in zip(columns, body[0]) if v.strip())[:200] if body else ""
+        raise ValueError(f"Could not find a phone number column. First row reads: {preview}" if preview
+                         else "Could not find a phone number column (name it 'phone')")
+    name_idx = next((lowered.index(h) for h in _NAME_HEADERS if h in lowered), None)
+    if name_idx is None:
+        name_idx = _pick_name_column(body, width, phone_idx)
+    if not has_header:  # label the columns we worked out, so the UI shows "phone" and "name"
+        columns[phone_idx] = "phone"
+        if name_idx is not None:
+            columns[name_idx] = "name"
+
+    parsed = ParsedCsv(columns=columns, rows=[], phone_column=columns[phone_idx])
     seen: set[str] = set()
     for row in body:
         cells = [c.strip() for c in row] + [""] * (len(columns) - len(row))
@@ -113,6 +164,20 @@ def parse_csv(raw: bytes) -> ParsedCsv:
         if len(parsed.rows) > MAX_RECIPIENTS:
             raise ValueError(f"More than {MAX_RECIPIENTS:,} numbers; split the list into smaller campaigns")
     return parsed
+
+
+def explain_empty_csv(parsed: ParsedCsv) -> str:
+    """Say what we read and why it was rejected, so the fix is obvious without opening the file."""
+    where = f" in the '{parsed.phone_column}' column" if parsed.phone_column else ""
+    samples = [v for v in parsed.invalid if v != "(empty)"][:3]
+    detail = f"No usable phone numbers found{where}: {len(parsed.invalid)} rejected"
+    if samples:
+        detail += " (" + ", ".join(samples) + ")"
+    if any(_SCIENTIFIC.match(v) for v in parsed.invalid[:200]):
+        return detail + ". Excel has shortened the numbers to scientific notation - set that column to Text or Number with 0 decimals, save again, and re-upload."
+    if parsed.duplicates:
+        detail += f", {parsed.duplicates} duplicate"
+    return detail + ". Numbers must be 10-digit Indian mobiles, optionally with 91 or +91 in front."
 
 
 def resolve_params(params: list[dict], name: str | None, values: dict) -> list[str]:

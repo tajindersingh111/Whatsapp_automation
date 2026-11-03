@@ -89,6 +89,14 @@ class FakeLLM:
         return [b for b in last["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
 
 
+@pytest.fixture(autouse=True)
+def _never_call_real_claude():
+    """Tests must never reach the real Anthropic API, even if a flow triggers an AI reply by accident."""
+    llm_mod.set_llm(FakeLLM())
+    yield
+    llm_mod.set_llm(None)
+
+
 @pytest.fixture
 def fake_llm():
     fake = FakeLLM()

@@ -19,7 +19,16 @@ from app.models import Campaign, CampaignRecipient, Tenant, WhatsAppAccount
 from app.security import decrypt, require_admin
 from app.services import campaigns as svc
 from app.services.messaging import tenant_sender
-from app.whatsapp.client import MAX_IMAGE_BYTES, WhatsAppError, check_image_url, discover_numbers, list_templates, sniff_image, upload_media
+from app.whatsapp.client import (
+    MAX_IMAGE_BYTES,
+    WhatsAppError,
+    check_image_url,
+    discover_numbers,
+    explain_error,
+    list_templates,
+    sniff_image,
+    upload_media,
+)
 
 router = APIRouter(prefix="/admin/tenants/{tenant_id}", tags=["campaigns"], dependencies=[Depends(require_admin)])
 
@@ -281,7 +290,9 @@ async def get_campaign(tenant_id: uuid.UUID, campaign_id: int, session: AsyncSes
         .order_by(CampaignRecipient.id)
         .limit(100)
     )).all()
-    return {**await _view(session, campaign), "problems": [{"phone": r.phone, "name": r.name, "status": r.status, "error": r.error} for r in problems]}
+    return {**await _view(session, campaign), "problems": [
+        {"phone": r.phone, "name": r.name, "status": r.status, "error": r.error, "why": explain_error(r.error)} for r in problems
+    ]}
 
 
 @router.post("/campaigns/{campaign_id}/test")

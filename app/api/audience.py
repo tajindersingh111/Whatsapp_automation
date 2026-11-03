@@ -20,7 +20,7 @@ from app.services.conversations import get_or_create_contact
 
 router = APIRouter(prefix="/admin/tenants/{tenant_id}/audience", tags=["audience"], dependencies=[Depends(require_admin)])
 
-Segment = Literal["replied", "read_no_reply", "delivered_unread", "not_delivered", "failed", "excluded"]
+Segment = Literal["replied", "read_no_reply", "delivered_unread", "not_delivered", "meta_limited", "failed", "excluded"]
 
 
 class ExcludeIn(BaseModel):

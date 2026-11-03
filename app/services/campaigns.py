@@ -151,6 +151,7 @@ class Engagement:
     read: int = 0  # blue ticks (only if the customer has read receipts on)
     replied: int = 0  # customer wrote back after the message
     failed: int = 0  # Meta could not deliver at all
+    limited: int = 0  # of those, held back by Meta for low engagement (131049): the number itself is fine
     last_sent_at: datetime | None = None
 
     @property
@@ -162,7 +163,7 @@ class Engagement:
         if self.delivered:
             return "delivered_unread"
         if self.attempts and self.failed == self.attempts:
-            return "failed"
+            return "meta_limited" if self.limited == self.failed else "failed"
         if self.attempts:
             return "not_delivered"
         return "none"
@@ -173,6 +174,7 @@ SEGMENTS = {
     "read_no_reply": "Seen, no reply",
     "delivered_unread": "Delivered, not seen",
     "not_delivered": "Single tick (not delivered)",
+    "meta_limited": "Held back by Meta",
     "failed": "Failed",
 }
 
@@ -192,6 +194,7 @@ async def engagement_by_phone(session: AsyncSession, tenant_id, phones: list[str
             func.count().filter((r.status == "read") | r.replied_at.is_not(None)),
             func.count().filter(r.replied_at.is_not(None)),
             func.count().filter(r.status == "failed"),
+            func.count().filter((r.status == "failed") & (r.error.like("131049%") | r.error.like("%(code 131049)%"))),
             func.max(r.sent_at),
         )
         .where(r.tenant_id == tenant_id)
@@ -200,8 +203,8 @@ async def engagement_by_phone(session: AsyncSession, tenant_id, phones: list[str
     if phones is not None:
         stmt = stmt.where(r.phone.in_(phones))
     return {
-        phone: Engagement(attempts=a, delivered=d, read=rd, replied=rp, failed=f, last_sent_at=last)
-        for phone, a, d, rd, rp, f, last in (await session.execute(stmt)).all()
+        phone: Engagement(attempts=a, delivered=d, read=rd, replied=rp, failed=f, limited=lim, last_sent_at=last)
+        for phone, a, d, rd, rp, f, lim, last in (await session.execute(stmt)).all()
     }
 
 
@@ -244,9 +247,10 @@ async def add_recipients(
             skipped.excluded += 1
             return "excluded from campaigns" + (f": {c.excluded_reason}" if c.excluded_reason else "")
         h = history.get(phone)
-        if h and skip_never_delivered and h.attempts >= NEVER_DELIVERED_AFTER and h.delivered == 0:
+        dead_attempts = (h.attempts - h.limited) if h else 0
+        if h and skip_never_delivered and dead_attempts >= NEVER_DELIVERED_AFTER and h.delivered == 0:
             skipped.never_delivered += 1
-            return f"auto-skipped: last {h.attempts} campaign messages were never delivered"
+            return f"auto-skipped: last {dead_attempts} campaign messages were never delivered"
         if h and skip_never_replied and h.delivered >= NEVER_REPLIED_AFTER and h.replied == 0:
             skipped.never_replied += 1
             return f"auto-skipped: {h.delivered} campaign messages delivered, never replied"
@@ -351,6 +355,12 @@ async def counts(session: AsyncSession, campaign_id: int) -> dict[str, int]:
     )).all()
     out = {s: 0 for s in ("pending", "sent", "delivered", "read", "failed", "skipped")}
     out.update({status: n for status, n in rows})
+    out["limited"] = await session.scalar(
+        select(func.count()).select_from(CampaignRecipient).where(
+            CampaignRecipient.campaign_id == campaign_id, CampaignRecipient.status == "failed",
+            CampaignRecipient.error.like("131049%") | CampaignRecipient.error.like("%(code 131049)%"),
+        )
+    ) or 0
     out["replied"] = await session.scalar(
         select(func.count()).select_from(CampaignRecipient)
         .where(CampaignRecipient.campaign_id == campaign_id, CampaignRecipient.replied_at.is_not(None))

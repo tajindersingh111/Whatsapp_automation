@@ -88,7 +88,7 @@ async def test_campaign_end_to_end(api, tenant, db, graph):
 
     detail = (await api.get(f"/admin/tenants/{tenant.id}/campaigns/{cid}", headers=ADMIN)).json()
     assert detail["status"] == "done" and detail["counts"]["sent"] == 2
-    assert detail["problems"] == [{"phone": "919800000009", "name": "Opted Out", "status": "skipped", "error": "customer opted out (STOP)"}]
+    assert detail["problems"] == [{"phone": "919800000009", "name": "Opted Out", "status": "skipped", "error": "customer opted out (STOP)", "why": None}]
 
     # Delivery receipts from Meta update the campaign numbers.
     rec = await db.scalar(select(CampaignRecipient).where(CampaignRecipient.phone == "919876543210"))

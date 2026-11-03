@@ -318,7 +318,7 @@ function ticks(status, label = false) {
   const map = {
     sent: ["sent", CHECK1, "Single tick"], simulated: ["sent", CHECK1, "Simulated"], queued: ["sent", CHECK1, "Queued"],
     delivered: ["delivered", CHECK2, "Delivered"], read: ["read", CHECK2, "Seen"],
-    replied: ["replied", "↩", "Replied"], failed: ["failed", "✕", "Failed"],
+    replied: ["replied", "↩", "Replied"], failed: ["failed", "✕", "Failed"], limited: ["sent", "⏸", "Held by Meta"],
   };
   const [cls, glyph, text] = map[status] || ["sent", "", status || ""];
   return `<span class="tick ${cls}" title="${text}">${glyph}${label ? text : ""}</span>`;
@@ -328,8 +328,21 @@ const SEG_UI = {
   read_no_reply: { c: "var(--primary)", status: "read", d: "Opened (blue ticks) but never replied." },
   delivered_unread: { c: "#8a8aa0", status: "delivered", d: "Reached the phone, never opened. Read receipts may be off." },
   not_delivered: { c: "var(--accent)", status: "sent", d: "Stuck on single tick: phone off, number inactive or blocked." },
+  meta_limited: { c: "#c98a14", status: "limited", d: "Meta held the marketing message back (131049): this customer hasn't chatted with you. Not charged, the number is fine." },
   failed: { c: "var(--danger)", status: "failed", d: "Meta could not deliver (not on WhatsApp, invalid)." },
   excluded: { c: "var(--muted)", status: "", d: "Kept out of future campaigns." },
+};
+const ERROR_HINTS = {
+  131049: "Held back by Meta (customer not engaged). No charge.",
+  131026: "Number can't receive WhatsApp messages.",
+  131048: "Meta spam limit reached.",
+  131056: "Too many messages to this customer too fast.",
+  130472: "Meta skipped this customer (experiment).",
+};
+const errText = (raw) => {
+  const m = String(raw || "").match(/^\s*(\d{4,6}):|\(code (\d+)\)/);
+  const code = m && Number(m[1] || m[2]);
+  return ERROR_HINTS[code] ? `${ERROR_HINTS[code]} (code ${code})` : String(raw || "");
 };
 const RATE = { MARKETING: 0.86, UTILITY: 0.13, AUTHENTICATION: 0.13 }; // approx ₹/message; confirm on Meta's pricing page
 
@@ -611,7 +624,7 @@ function bubble(m, clickable = false) {
   const img = imgUrl ? `<img src="${esc(imgUrl)}" alt="">` : "";
   const text = it ? (it.body?.text || "") : m.body;
   const time = m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
-  const meta = out ? `<small>${esc(m.sender || "")}${time ? " · " + time : ""}${m.status ? " " + ticks(m.status) : ""}${m.error ? ` <span class="error">${esc(m.error)}</span>` : ""}</small>`
+  const meta = out ? `<small>${esc(m.sender || "")}${time ? " · " + time : ""}${m.status ? " " + ticks(m.status) : ""}${m.error ? ` <span class="error">${esc(errText(m.error))}</span>` : ""}</small>`
     : (time ? `<small>${time}</small>` : "");
   return `<div class="bubble ${out ? "out" : "in"}">${img}${esc(text)}${chips(m, clickable)}${meta}</div>`;
 }
@@ -897,9 +910,14 @@ async function campaignDetail(el, id) {
     ${card("1. Send yourself a test", "Check the message on your own phone first.", `<div class="row"><input id="cd_phone" placeholder="Your WhatsApp number, e.g. 98765 43210" style="flex:1"><button class="secondary" id="cd_test">Send test</button></div><p class="muted small" id="cd_test_out"></p>`)}
     ${card("2. Send to everyone", `${toSend} customers · approx Meta charge <b>${inr(toSend * rate)}</b> (~₹${rate}/message, check Meta's current rates)`, `<div class="row"><button class="accent" id="cd_start">Start sending</button><button class="ghost danger" id="cd_cancel">Discard draft</button></div>`)}
   </div>` : ""}
-  ${c.status === "done" && k.sent + k.failed ? `<div class="callout"><div class="t"><b>${k.sent + k.failed} numbers in this campaign were never reached.</b> <span class="muted">Exclude them so the next campaign doesn't pay for them.</span></div><button class="accent" id="cd_clean">Exclude unreached</button></div>` : ""}
+  ${k.limited ? `<div class="callout info" style="flex-direction:column;align-items:stretch">
+    <div><b>${k.limited} customer${k.limited === 1 ? "" : "s"}: Meta held the message back (error 131049).</b></div>
+    <div class="small">This is Meta's per-customer decision to protect people from marketing: it is <b>not a bug and you are not charged</b>. It mostly happens to customers who have never chatted with your number.
+      <b>What to do:</b> ask them to message your number first (even just "Hi"), then send again. Customers who talked to you recently receive marketing templates far more reliably. They were <b>not</b> marked as dead numbers.</div>
+    <div><button class="secondary sm" id="cd_limited">See everyone in this campaign</button></div></div>` : ""}
+  ${c.status === "done" && k.sent + (k.failed - k.limited) > 0 ? `<div class="callout"><div class="t"><b>${k.sent + (k.failed - k.limited)} numbers in this campaign were never reached.</b> <span class="muted">Exclude them so the next campaign doesn't pay for them.</span></div><button class="accent" id="cd_clean">Exclude unreached</button></div>` : ""}
   ${c.problems.length ? card("Not sent", "Skipped or failed numbers and why", `<div class="table-wrap"><table><tr><th>Phone</th><th>Name</th><th>Status</th><th>Reason</th></tr>
-      ${c.problems.map((p) => `<tr><td>+${esc(p.phone)}</td><td>${esc(p.name || "")}</td><td><span class="pill ${p.status === "failed" ? "danger" : "orange"}">${esc(p.status)}</span></td><td class="muted">${esc(p.error || "")}</td></tr>`).join("")}</table></div>`) : ""}`;
+      ${c.problems.map((p) => `<tr><td>+${esc(p.phone)}</td><td>${esc(p.name || "")}</td><td><span class="pill ${p.status === "failed" ? "danger" : "orange"}">${esc(p.status)}</span></td><td class="muted">${p.why ? `<b>${esc(p.why.title)}</b><br><span class="small">${esc(p.why.action)}</span>` : esc(errText(p.error))}</td></tr>`).join("")}</table></div>`) : ""}`;
   $("#cd_back", el).onclick = () => { openCampaign = null; render(); };
   const aud = $("#cd_aud", el); if (aud) aud.onclick = () => navigate("audience", { campaign: { id, name: c.name } });
   const test = $("#cd_test", el);
@@ -928,6 +946,8 @@ async function campaignDetail(el, id) {
   };
   const cancelBtn = $("#cd_cancel", el);
   if (cancelBtn) cancelBtn.onclick = async () => { await api(T(`/campaigns/${id}/cancel`), { method: "POST" }); render(); };
+  const limitedBtn = $("#cd_limited", el);
+  if (limitedBtn) limitedBtn.onclick = () => navigate("audience", { campaign: { id, name: c.name } });
   const clean = $("#cd_clean", el);
   if (clean) clean.onclick = async () => {
     await api(T("/audience/exclude"), { method: "POST", body: { segment: "not_delivered", campaign_id: id, reason: `single tick in ${c.name}` } });

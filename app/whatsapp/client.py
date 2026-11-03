@@ -413,3 +413,48 @@ async def upload_media(http: httpx.AsyncClient, graph_version: str, phone_number
         err = body.get("error", {}) if isinstance(body, dict) else {}
         raise WhatsAppError(f"Meta media upload failed ({resp.status_code}): {err.get('message') or resp.text[:200]}", code=err.get("code"), status=resp.status_code)
     return str(body["id"])
+
+
+_ANY_CODE = re.compile(r"^\s*(\d{4,6}):|\(code (\d+)\)")
+
+# Meta decided not to deliver this marketing message to this customer (not engaged / too much marketing).
+# Not a bad number and not charged: the customer can receive it later, e.g. after messaging the business.
+ENGAGEMENT_CODE = 131049
+
+_EXPLANATIONS: dict[int, tuple[str, str]] = {
+    131049: (
+        "Held back by Meta: this customer hasn't engaged with you",
+        "Meta decides this per customer to protect them from marketing, so it is not a bug and you are not charged. "
+        "Ask the customer to message your number first (even just 'Hi'), then send again: marketing templates reach customers who "
+        "have chatted with you recently far more reliably. Send fewer marketing messages per customer.",
+    ),
+    131026: (
+        "Number can't receive WhatsApp messages",
+        "The number is not on WhatsApp, is switched off for a long time, or is invalid. Safe to exclude from future campaigns.",
+    ),
+    131048: ("Your account hit Meta's spam limit", "Too many customers reported or ignored your messages. Pause marketing for a day and improve the message."),
+    131056: ("Sending to this customer too fast", "Too many messages to the same customer in a short time. Wait and send later."),
+    130472: ("Customer is part of a Meta experiment", "Meta skipped this customer. Nothing is wrong with your account; try again later."),
+    131053: ("Image could not be used", "Meta could not download or read the header image. Resume the campaign with the template's own image or a new upload."),
+    132001: ("Template not found", "The template name or language does not exist in this WhatsApp account."),
+    132012: ("Template variables don't match", "The values sent don't match the template (a missing variable or a missing header image)."),
+}
+
+
+def error_code_of(text: str | None) -> int | None:
+    """Meta error code from a stored error (webhook form '131049: ...' or send form '... (code 131049): ...')."""
+    m = _ANY_CODE.search(text or "")
+    return int(m.group(1) or m.group(2)) if m else None
+
+
+def is_engagement_block(text: str | None) -> bool:
+    return error_code_of(text) == ENGAGEMENT_CODE
+
+
+def explain_error(text: str | None) -> dict | None:
+    """Plain-language reason and next step for a stored send error."""
+    code = error_code_of(text)
+    if code in _EXPLANATIONS:
+        title, action = _EXPLANATIONS[code]
+        return {"code": code, "title": title, "action": action, "customer_side": code in (ENGAGEMENT_CODE, 130472)}
+    return None

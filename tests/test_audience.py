@@ -49,7 +49,7 @@ async def test_segments_exclude_and_reuse(api, tenant, db, graph):
     await drain()
 
     a = (await api.get(f"/admin/tenants/{tenant.id}/audience", headers=ADMIN)).json()
-    assert a["summary"] == {"replied": 1, "read_no_reply": 1, "delivered_unread": 1, "not_delivered": 1, "failed": 1, "excluded": 0}
+    assert a["summary"] == {"replied": 1, "read_no_reply": 1, "delivered_unread": 1, "not_delivered": 1, "meta_limited": 0, "failed": 1, "excluded": 0}
     seg = {r["phone"]: r["segment"] for r in a["rows"]}
     assert seg == {"919810000001": "replied", "919810000002": "read_no_reply", "919810000003": "delivered_unread",
                    "919810000004": "not_delivered", "919810000005": "failed"}
@@ -130,3 +130,57 @@ async def test_reply_in_the_same_second_still_counts(db, tenant):
     other = await db.scalar(select(CampaignRecipient).where(CampaignRecipient.phone == "919830000002"))
     await db.refresh(other)
     assert other.replied_at is None
+
+
+async def _failures(api, db, cid, codes: dict[str, int]):
+    """Meta status webhooks: failed with an error code per phone."""
+    rows = {r.phone: r for r in (await db.scalars(select(CampaignRecipient).where(CampaignRecipient.campaign_id == cid))).all()}
+    titles = {131049: "This message was not delivered to maintain healthy ecosystem engagement", 131026: "Message undeliverable"}
+    payload = meta_payload("x", wamid="ignored")
+    value = payload["entry"][0]["changes"][0]["value"]
+    value.pop("messages")
+    value["statuses"] = [
+        {"id": rows[p].wa_message_id, "status": "failed", "recipient_id": p, "errors": [{"code": code, "title": titles[code]}]}
+        for p, code in codes.items()
+    ]
+    await post_meta(api, payload)
+
+
+async def test_meta_held_back_customers_are_not_dead_numbers(api, tenant, db, graph):
+    people = {"919840000001": "Held", "919840000002": "Dead", "919840000003": "Good"}
+    cid = await run_campaign(api, tenant.id, people)
+    await _failures(api, db, cid, {"919840000001": 131049, "919840000002": 131026})
+    await receipts(api, db, cid, {"919840000003": "delivered"})
+
+    a = (await api.get(f"/admin/tenants/{tenant.id}/audience", headers=ADMIN)).json()
+    seg = {r["phone"]: r["segment"] for r in a["rows"]}
+    assert seg == {"919840000001": "meta_limited", "919840000002": "failed", "919840000003": "delivered_unread"}
+    assert a["summary"]["meta_limited"] == 1 and a["summary"]["failed"] == 1 and a["labels"]["meta_limited"] == "Held back by Meta"
+
+    detail = (await api.get(f"/admin/tenants/{tenant.id}/campaigns/{cid}", headers=ADMIN)).json()
+    assert detail["counts"]["failed"] == 2 and detail["counts"]["limited"] == 1
+    why = {p["phone"]: p["why"] for p in detail["problems"]}
+    assert why["919840000001"]["code"] == 131049 and why["919840000001"]["customer_side"] is True
+    assert "message your number first" in why["919840000001"]["action"]
+    assert why["919840000002"]["code"] == 131026 and why["919840000002"]["customer_side"] is False
+
+    # "Exclude failed" removes the dead number only; the Meta-held customer can still be reached later.
+    r = await api.post(f"/admin/tenants/{tenant.id}/audience/exclude", json={"segment": "failed"}, headers=ADMIN)
+    assert r.json()["excluded"] == 1
+    excluded = (await api.get(f"/admin/tenants/{tenant.id}/audience?segment=excluded", headers=ADMIN)).json()["rows"]
+    assert [x["phone"] for x in excluded] == ["919840000002"]
+
+
+async def test_engagement_blocks_do_not_trigger_auto_skip(api, tenant, db, graph):
+    people = {"919850000001": "Held", "919850000002": "Dead"}
+    for _ in range(2):
+        cid = await run_campaign(api, tenant.id, people)
+        await _failures(api, db, cid, {"919850000001": 131049, "919850000002": 131026})
+    r = await api.post(
+        f"/admin/tenants/{tenant.id}/campaigns",
+        data={"name": "Third", "template_name": "promo", "params": "[]"},
+        files={"file": ("l.csv", csv_for(people), "text/csv")}, headers=ADMIN,
+    )
+    body = r.json()
+    # The dead number is skipped after two failures; the Meta-held one is not (it costs nothing and can recover).
+    assert body["skipped"]["never_delivered"] == 1 and body["counts"]["pending"] == 1

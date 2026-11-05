@@ -1,4 +1,4 @@
-# WhatsApp Sales Agent
+# Prabhjas Tech — WhatsApp Sales Agent
 
 A multi-tenant WhatsApp AI sales agent for Indian D2C brands, built on FastAPI, PostgreSQL, the official Meta WhatsApp Cloud API and Claude. One deployment serves many brands. Each brand gets its own catalog, its own trained "bot brain", its own inbox and its own analytics.
 

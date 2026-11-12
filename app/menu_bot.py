@@ -15,11 +15,13 @@ from dataclasses import dataclass, field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import sales_flow
 from app.bot_config import BotConfig
 from app.connectors.base import OrderItemInput, StoreConnector, StoreError
 from app.models import Contact, Conversation, Message, Product, Tenant
 from app.services import catalog
 from app.services.conversations import set_lead_stage
+from app.services import lead_alert
 from app.services.faq import match_faq
 from app.services.messaging import send_message
 from app.services.orders import lookup_customer_orders, order_view
@@ -95,11 +97,11 @@ class MenuBot:
             await self.track(_ORDER_NO.search(text).group(1))
         else:
             self.state.pop("awaiting", None)
-            await self.on_text(text)
+            await self.on_text(text, msg.kind)
         self.conv.state = self.state
         return self.result
 
-    async def on_text(self, text: str) -> None:
+    async def on_text(self, text: str, kind: str = "text") -> None:
         norm, words = _norm(text), _words(text)
         if norm in GREETINGS or (words and words <= GREETINGS | {"ji", "sir", "mam", "bhai"}):
             return await self.welcome()
@@ -109,6 +111,10 @@ class MenuBot:
         if words & TRACK_WORDS or ("order" in words and (_ORDER_NO.search(text) or words & WHEN_WORDS)):
             number = _ORDER_NO.search(text)
             return await self.track(number.group(1) if number else None)
+
+        if self.cfg.sales_flow.enabled:
+            if await self.sales_step(text, kind):
+                return
 
         faq = await match_faq(self.session, self.tenant.id, self.cfg, text)
         if faq:
@@ -128,6 +134,54 @@ class MenuBot:
         if not self.state.get("greeted"):
             return await self.welcome()
         await self.send(buttons_message(self.fmt(self.m.not_understood), self.main_buttons()))
+
+    async def sales_step(self, text: str, kind: str) -> bool:
+        """Qualify before quoting. True when the flow handled this message.
+
+        A factual question mid-flow still gets its answer — the pending question is
+        appended to it, so the customer is never stonewalled to keep the flow moving.
+        """
+        sf = sales_flow.load(self.state)
+        faq = None if sales_flow.asks_price(text) else await match_faq(self.session, self.tenant.id, self.cfg, text)
+        reply, quoted = sales_flow.advance(sf, text, kind, self.cfg)
+        sales_flow.save(self.state, sf)
+        if reply is None and faq is None:
+            return False
+
+        parts = []
+        if faq:
+            self.result.events.append({"type": "faq", "source": faq.source})
+            parts.append(faq.answer)
+        if reply:
+            parts.append(reply)
+        body = "\n\n".join(parts)
+
+        self.state["misses"] = 0
+        summary = sales_flow.summary(sf)
+        if quoted or sf.get("quoted"):
+            set_lead_stage(self.contact, "interested", summary.replace("\n", "; ")[:240] or None)
+        else:
+            set_lead_stage(self.contact, "browsing", f"qualifying: {sf.get('asked') or ''}")
+        self.result.events.append({"type": "sales_flow", "step": sf.get("asked"), "quoted": bool(sf.get("quoted"))})
+
+        # A lead counts as hot once it is quoted AND every question is answered. A
+        # customer who bullied the rate out early is not there yet, so the bot keeps
+        # qualifying and this fires on the turn that completes the picture.
+        complete = sf.get("quoted") and sales_flow.next_slot(sf, self.cfg) is None
+        if complete and not sf.get("alerted"):
+            sf["alerted"] = True
+            sales_flow.save(self.state, sf)
+            if self.cfg.lead_alert.handoff_on_quote:
+                self.conv.mode = "human"
+                self.conv.handoff_reason = f"Quoted lead — {lead_alert.one_line(summary)}"
+            sent = await lead_alert.alert_team(self.session, self.tenant, self.cfg, self.contact, summary)
+            self.result.events.append({"type": "lead_alert", "sent": sent})
+
+        if len(body) <= 1000:
+            await self.send(buttons_message(body, [("menu:human", self.m.human_label)]))
+        else:
+            await self.send(text_message(body))
+        return True
 
     async def on_payload(self, payload: str) -> None:
         kind, _, rest = payload.partition(":")

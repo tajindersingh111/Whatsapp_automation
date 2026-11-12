@@ -42,6 +42,58 @@ class LeadFollowupFlow(BaseModel):
     max_followups: int = 1
 
 
+class LeadAlertConfig(BaseModel):
+    """Tell the team on WhatsApp the moment a lead is worth a call.
+
+    The alert is business-initiated, so it has to go out as an approved utility
+    template — free text to a team number only works inside a 24h window and would
+    silently fail the rest of the time. Body params are {{1}} customer name,
+    {{2}} their number, {{3}} a one-line summary of what they asked for.
+    """
+
+    enabled: bool = False
+    # Team numbers as E.164 digits without '+', e.g. ["919079444040"].
+    to_numbers: list[str] = Field(default_factory=list)
+    template_name: str = "new_hot_lead"
+    template_language: str = "en"
+    # Take the chat off the bot once it is quoted, so the team can close it without
+    # the bot talking over them.
+    handoff_on_quote: bool = True
+
+
+class SalesFlowConfig(BaseModel):
+    """Qualify first, quote last — the slot-filling flow in app/sales_flow.py.
+
+    Off by default: a brand with a public price list wants the FAQ to answer "price?"
+    straight away. Turn it on where the rate depends on the job (print, fabrication,
+    anything quoted per size and quantity) so leads arrive with the detail to quote.
+    """
+
+    enabled: bool = False
+    want_photo: bool = True      # ask for a photo of the item the sticker goes on
+    want_design: bool = True     # ask for their artwork
+    # How many times a customer may ask for the rate before the bot just gives it.
+    # Holding out longer than this on WhatsApp loses the lead.
+    price_after_asks: int = 2
+
+    deflect_text: str = "Rate bilkul bata deti hoon ji 👍 Bas ek cheez pooch loon taaki aapko exact rate mile, andaaza nahi."
+    summary_intro: str = "Perfect ji 🙏 Aapki detail note kar li:"
+    price_text: str = (
+        "Rate ye rahe 👇\n"
+        "*A4 sheet* — 1 se 5 sheet Rs 200/sheet, 10+ sheet Rs 180/sheet\n"
+        "*A3 sheet* — 1 se 5 sheet Rs 300/sheet, 5+ sheet Rs 280/sheet\n\n"
+        "Aapke design ke size se ek sheet par kitne stickers aayenge, team layout bana kar exact bata degi — "
+        "usi hisaab se final rate. Team abhi aapse is number par baat karegi 👍"
+    )
+
+    ask_item: str = "Bahut badhiya 👍 Pehle ye bataiye — sticker kis cheez par lagana hai? (mug, bottle, jar, packaging box, glass, ya kuch aur)"
+    ask_photo: str = "Us item ki ek photo bhej dijiye 📷 Isse main bata paungi ki sticker kaisa baithega aur kitna size sahi rahega."
+    ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi, warna high-resolution PNG bhi chalega. Design nahi hai to bata dijiye — hamari team bana deti hai."
+    ask_size: str = "Sticker ka approx size kitna chahiye? (jaise 2 inch ya 3x3 inch) — isi se pata chalta hai ek sheet par kitne aayenge."
+    ask_qty: str = "Aur approx kitne piece chahiye? (ya kitni sheet)"
+    ask_city: str = "Last cheez — aap kis city se hain? Courier aur timeline uske hisaab se batate hain."
+
+
 class MenuConfig(BaseModel):
     """Texts for the menu bot (no AI). {name}, {brand}, {hours}, {product} are filled in."""
 
@@ -66,6 +118,8 @@ class BotConfig(BaseModel):
     # menu: buttons + FAQ + catalog search, no AI cost.  ai: Claude sales agent.
     reply_mode: Literal["menu", "ai"] = "menu"
     menu: MenuConfig = Field(default_factory=MenuConfig)
+    sales_flow: SalesFlowConfig = Field(default_factory=SalesFlowConfig)
+    lead_alert: LeadAlertConfig = Field(default_factory=LeadAlertConfig)
     brand_name: str = "Our Store"
     assistant_name: str = "Riya"
     store_url: str | None = None

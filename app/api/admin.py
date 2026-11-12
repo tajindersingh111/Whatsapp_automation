@@ -350,10 +350,12 @@ def _last_direction():
 
 
 # Inbox views. "waiting" and "chatting" separate real conversations from campaign blasts nobody answered.
-INBOX_VIEWS = ("all", "waiting", "chatting", "human", "no_reply")
+INBOX_VIEWS = ("all", "hot", "waiting", "chatting", "human", "no_reply")
 
 
 def _apply_view(stmt, view: str):
+    if view == "hot":  # qualified by the sales flow: quote sent, worth a call now
+        return stmt.where(Contact.lead_stage.in_(("interested", "checkout_sent")))
     if view == "waiting":  # customer wrote last: they are waiting for an answer
         return stmt.where(_last_direction() == "in")
     if view == "chatting":  # customer has written at least once

@@ -111,6 +111,21 @@
   .pill.blue { background: var(--blue-soft); color: var(--blue); }
   .pill.orange { background: var(--accent-soft); color: var(--accent); }
 
+  /* Today */
+  .today-hero { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; box-shadow: var(--shadow); margin-bottom: 18px; }
+  .today-hero .big { font: 700 46px/1 var(--font); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .today-hero.live .big { color: var(--orange); }
+  .today-hero .lbl { color: var(--muted); font-size: 13px; font-weight: 600; margin-top: 4px; }
+  .todos { display: flex; flex-direction: column; }
+  .todo { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; padding: 14px 16px; border-top: 1px solid var(--line); align-items: center; }
+  .todo:first-child { border-top: 0; }
+  .todo .who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .todo .want { grid-column: 1; color: var(--muted); font-size: 13px; line-height: 1.45; }
+  .todo .act { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 8px; align-items: center; }
+  .todo .want .chip { display: inline-block; background: var(--chip, rgba(127,127,127,.12)); border-radius: 999px; padding: 2px 9px; margin: 2px 6px 2px 0; font-size: 12px; color: var(--ink); }
+  .todo.stale .want { opacity: .6; }
+  @media (max-width: 700px) { .todo { grid-template-columns: 1fr; } .todo .act { grid-column: 1; grid-row: auto; } }
+
   .kpis { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 18px; }
   .kpi { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
   .kpi .l { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
@@ -244,22 +259,48 @@ const ICONS = {
   calls: '<path d="M6.5 3h-3a1 1 0 0 0-1 1.1A17 17 0 0 0 19.9 21.5a1 1 0 0 0 1.1-1v-3a1 1 0 0 0-.8-1l-3-.6a1 1 0 0 0-1 .4l-1 1.4a13 13 0 0 1-5.4-5.4l1.4-1a1 1 0 0 0 .4-1l-.6-3a1 1 0 0 0-1-.8z"/>',
   setup: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  today: '<path d="M12 3a9 9 0 1 0 9 9"/><path d="M12 7v5l3.5 2"/><path d="M16.5 3.5 21 8"/>',
+  customers: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.5"/><path d="M15.5 14.3c.6-.2 1.3-.3 2-.3 2.5 0 4.5 2 4.5 4.5"/>',
+  bot: '<rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 4.5V8"/><circle cx="12" cy="3.5" r="1.2"/><path d="M9.5 13v1.5M14.5 13v1.5"/>',
 };
-const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+// Any page without its own glyph falls back to the menu icon rather than "undefined".
+const ICON_FALLBACK = ICONS.menu;
+const icon = (name) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name] || ICON_FALLBACK}</svg>`;
 const PAGES = [
-  { group: "Workspace" },
-  { id: "overview", label: "Overview", sub: "How the bot and campaigns are doing" },
+  { id: "today", label: "Today", sub: "Who is waiting for you right now" },
   { id: "inbox", label: "Inbox", sub: "Every WhatsApp conversation" },
-  { id: "audience", label: "Audience", sub: "Who reads, who replies, and who costs you money" },
+  { id: "customers", label: "Customers", sub: "Buying stage, who reads and replies, and calls" },
   { id: "campaigns", label: "Bulk messages", sub: "Send approved templates to your customer list" },
-  { id: "calls", label: "Calls", sub: "Incoming WhatsApp calls, missed calls and talk time" },
-  { id: "leads", label: "Leads & orders", sub: "Buying stage of every customer" },
-  { group: "Bot" },
-  { id: "training", label: "Bot training", sub: "Teach the bot your brand, policies and answers" },
-  { id: "playground", label: "Playground", sub: "Chat with the bot like a customer" },
-  { group: "Settings" },
+  { id: "bot", label: "Bot", sub: "Teach the bot, and try it like a customer" },
+  { id: "overview", label: "Numbers", sub: "How the bot and campaigns are doing" },
   { id: "setup", label: "Setup", sub: "WhatsApp number, webhook and store" },
 ];
+
+// Pages that hold several of the old screens behind one nav item. Nothing was
+// removed: each entry still renders its original view, just one level in.
+const SUBPAGES = {
+  customers: [["leads", "Leads & orders"], ["audience", "Audience"], ["calls", "Calls"]],
+  bot: [["training", "Training"], ["playground", "Playground"]],
+};
+const PARENT_OF = Object.fromEntries(
+  Object.entries(SUBPAGES).flatMap(([parent, kids]) => kids.map(([id]) => [id, parent]))
+);
+let subTab = {};
+
+async function renderSub(el, parent) {
+  const kids = SUBPAGES[parent];
+  const active = subTab[parent] || kids[0][0];
+  el.innerHTML = `
+    <div class="tabsbar" style="margin-bottom:14px">
+      ${kids.map(([id, label]) => `<button class="${id === active ? "primary" : "ghost"} sm" data-sub="${id}">${label}</button>`).join("")}
+    </div>
+    <div id="subview"><div class="loading"><span class="spinner"></span>Loading…</div></div>`;
+  el.querySelectorAll("[data-sub]").forEach((b) => b.onclick = () => {
+    subTab[parent] = b.dataset.sub; store.set("wa_sub_" + parent, b.dataset.sub); render();
+  });
+  const host = $("#subview", el);
+  try { await views[active](host); } catch (e) { host.innerHTML = `<div class="card error">${esc(e.message)}</div>`; }
+}
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -278,7 +319,14 @@ const store = {
 };
 let token = store.get("wa_admin_token");
 let tenantId = store.get("wa_tenant");
-let tab = store.get("wa_tab") || "overview";
+let tab = store.get("wa_tab") || "today";
+// A saved tab (or an old bookmark) may name a screen that now lives inside another
+// page — send it to the parent with the right sub-tab selected.
+if (PARENT_OF[tab]) { subTab[PARENT_OF[tab]] = tab; tab = PARENT_OF[tab]; }
+for (const parent of Object.keys(SUBPAGES)) {
+  const saved = store.get("wa_sub_" + parent);
+  if (saved && !subTab[parent]) subTab[parent] = saved;
+}
 if (tab === "analytics") tab = "overview";
 let tenants = [];
 
@@ -427,6 +475,75 @@ const card = (title, sub, body, actions = "") => `<div class="card"><div class="
 const empty = (title, text, action = "") => `<div class="empty"><div class="big">${title}</div><div>${text}</div>${action ? `<p>${action}</p>` : ""}</div>`;
 
 /* ---------- Overview ---------- */
+views.customers = (el) => renderSub(el, "customers");
+views.bot = (el) => renderSub(el, "bot");
+
+/* ---------- Today: the only screen you need before lunch ---------- */
+function leadLine(c) {
+  // The bot's own summary of what they asked for, already stored on the contact.
+  // "Item: mug; Size: 3 inch; Qty: 500" reads far faster broken into chips.
+  const note = (c.contact.lead_note || "").replace(/^Quoted lead — /, "").trim();
+  if (!note) return esc(c.preview || "");
+  const bits = note.split(/[;·]/).map((s) => s.trim()).filter(Boolean);
+  if (bits.length < 2) return esc(note);
+  return bits.map((b) => `<span class="chip">${esc(b)}</span>`).join("");
+}
+
+views.today = async (el) => {
+  const [hot, waiting, a] = await Promise.all([
+    api(T("/conversations?view=hot")), api(T("/conversations?view=waiting")), api(T("/analytics?days=7")),
+  ]);
+  const openIds = new Set(hot.map((c) => c.id));
+  const rest = waiting.filter((c) => !openIds.has(c.id));
+
+  const leadCard = (c) => `
+    <div class="todo ${c.can_reply ? "" : "stale"}" data-conv="${c.id}">
+      <div class="who">
+        <b>${esc(c.contact.name || c.contact.wa_id)}</b>
+        <span class="muted small">${ago(c.last_message_at)}</span>
+        ${c.can_reply ? "" : `<span class="pill danger" title="More than 24h since their last message — only an approved template can be sent now.">window closed</span>`}
+      </div>
+      <div class="want">${leadLine(c)}</div>
+      <div class="act">
+        <button class="primary sm" data-wa="${esc(c.contact.wa_id)}">Call / WhatsApp</button>
+        <button class="ghost sm" data-open="${c.id}">Open chat</button>
+      </div>
+    </div>`;
+
+  el.innerHTML = `
+  <div class="today-hero ${hot.length ? "live" : ""}">
+    <div>
+      <div class="big">${hot.length}</div>
+      <div class="lbl">${hot.length === 1 ? "hot lead" : "hot leads"} ready for a call</div>
+    </div>
+    <div class="muted small">Quote already sent by the bot. ${rest.length} more ${rest.length === 1 ? "customer is" : "customers are"} waiting for a reply.</div>
+  </div>
+
+  ${card("🔥 Call these first", "The bot has qualified them and sent the rate",
+    hot.length ? `<div class="todos">${hot.map(leadCard).join("")}</div>`
+               : empty("Abhi koi hot lead nahi", "Jaise hi bot kisi ko quote bhejega, wo yahan aa jayega."))}
+
+  ${rest.length ? card("Waiting for a reply", "Customer wrote last, nobody has answered",
+    `<div class="todos">${rest.slice(0, 8).map(leadCard).join("")}</div>`,
+    `<button class="ghost sm" id="goInbox">Open inbox</button>`) : ""}
+
+  <div class="kpis" style="margin-top:18px">
+    <div class="kpi"><div class="l">Conversations</div><div class="v">${a.conversations}</div><div class="s">last 7 days</div></div>
+    <div class="kpi"><div class="l">Interested</div><div class="v">${a.leads_by_stage.interested || 0}</div><div class="s">quoted by the bot</div></div>
+    <div class="kpi"><div class="l">Orders via bot</div><div class="v">${a.orders_by_bot.count}</div><div class="s">${inr(a.orders_by_bot.revenue)}</div></div>
+    <div class="kpi"><div class="l">Bot replies</div><div class="v">${a.bot_replies}</div><div class="s">${a.human_replies} by your team</div></div>
+  </div>`;
+
+  el.querySelectorAll("[data-wa]").forEach((b) => b.onclick = () => {
+    window.open(`https://wa.me/${b.dataset.wa}`, "_blank", "noopener");
+  });
+  el.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => {
+    tab = "inbox"; store.set("wa_tab", tab); inboxView = "hot"; openConv = Number(b.dataset.open); render();
+  });
+  const gi = $("#goInbox", el);
+  if (gi) gi.onclick = () => { tab = "inbox"; store.set("wa_tab", tab); inboxView = "waiting"; render(); };
+};
+
 views.overview = async (el) => {
   const [a, aud, camps, callData] = await Promise.all([api(T("/analytics?days=30")), api(T("/audience?limit=1")), api(T("/campaigns")), api(T("/calls?days=30&limit=1"))]);
   const callSummary = callData.summary;
@@ -548,17 +665,43 @@ let openConv = null;
 let inboxView = "all";
 let inboxQuery = "";
 const INBOX_TABS = [
+  ["hot", "🔥 Hot leads", "Qualified by the bot and already quoted. Call these first."],
   ["waiting", "Waiting for you", "Customer wrote last and nobody has answered. Longest wait first."],
   ["chatting", "In conversation", "Customers who have written to you at least once."],
   ["human", "Needs human", "The bot handed these over to your team."],
   ["no_reply", "No reply yet", "They got a message from you but never wrote back."],
   ["all", "All", "Every conversation."],
 ];
+let inboxTimer = null, lastHot = null;
+// A short two-note chime, synthesised so the dashboard needs no audio asset.
+function hotChime() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ac.createOscillator(), gain = ac.createGain();
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.frequency.setValueAtTime(880, ac.currentTime);
+    osc.frequency.setValueAtTime(1320, ac.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.22, ac.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.4);
+    osc.start(); osc.stop(ac.currentTime + 0.42);
+  } catch {}
+}
+
 views.inbox = async (el) => {
   const qs = new URLSearchParams({ view: inboxView });
   if (inboxQuery) qs.set("q", inboxQuery);
   const [convs, counts] = await Promise.all([api(T(`/conversations?${qs}`)), api(T("/conversations/summary"))]);
-  const tab = INBOX_TABS.find((t) => t[0] === inboxView);
+  const hot = counts.hot || 0;
+  if (lastHot !== null && hot > lastHot) hotChime();
+  lastHot = hot;
+  // Keep the list live, but never redraw while a chat is open and being replied to.
+  clearInterval(inboxTimer);
+  inboxTimer = setInterval(() => {
+    if (tab !== "inbox" || openConv || document.hidden) return;
+    render();
+  }, 10000);
+  const tabInfo = INBOX_TABS.find((t) => t[0] === inboxView);
   el.innerHTML = `<div class="split">
     <div class="card list">
       <div class="tabsbar" style="flex-wrap:wrap">${INBOX_TABS.map(([v, l, tip]) => `<button class="${inboxView === v ? "primary" : "ghost"} sm" data-view="${v}" title="${esc(tip)}">${l}${counts[v] ? ` <span class="${inboxView === v ? "" : "muted"}">${counts[v]}</span>` : ""}</button>`).join("")}</div>
@@ -577,7 +720,7 @@ views.inbox = async (el) => {
             </div>
             ${c.handoff_reason ? `<div class="small" style="color:var(--warn);margin-top:4px">${esc(c.handoff_reason)}</div>` : ""}
           </div>
-        </div>`).join("") || empty("Nothing here", inboxQuery ? "No conversation matches that search." : (tab ? tab[2] : "") + " Nothing in this view yet.")}</div>
+        </div>`).join("") || empty("Nothing here", inboxQuery ? "No conversation matches that search." : (tabInfo ? tabInfo[2] : "") + " Nothing in this view yet.")}</div>
     </div>
     <div class="card" id="conv_panel">${empty("Pick a conversation", "Read the chat, take over from the bot, or teach it a better answer.")}</div>
   </div>`;
@@ -1326,7 +1469,7 @@ async function render() {
   document.querySelectorAll("#nav button[data-tab]").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   const el = $("#view");
   if (!tenantId) return newBrandForm();
-  const page = PAGES.find((p) => p.id === tab) || PAGES[1];
+  const page = PAGES.find((p) => p.id === tab) || PAGES[0];
   setTitle(page.label, page.sub);
   refreshDot();
   el.innerHTML = `<div class="loading"><span class="spinner"></span>Loading…</div>`;

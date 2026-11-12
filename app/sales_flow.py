@@ -106,7 +106,10 @@ def _skip(slot: str, cfg: BotConfig) -> bool:
 
 
 def next_slot(sf: dict, cfg: BotConfig) -> str | None:
+    given_up = set(sf.get("skipped") or [])
     for slot in SLOTS:
+        if slot in given_up:
+            continue
         if not _skip(slot, cfg) and not sf.get(slot):
             return slot
     return None
@@ -160,6 +163,17 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     pushing = asks_price(text)
     if pushing:
         sf["price_asks"] = int(sf.get("price_asks", 0)) + 1
+
+    # The customer answered something else. Asking the same question again until they
+    # comply loses the lead — plenty of people will never send a photo — so give the
+    # question up and carry on. A quote with four of six answers still beats silence.
+    if asked and not sf.get(asked) and not pushing:
+        tries = dict(sf.get("tries") or {})
+        tries[asked] = tries.get(asked, 0) + 1
+        sf["tries"] = tries
+        # A photo or a file either arrives or it does not; text answers deserve a nudge.
+        if tries[asked] >= (1 if asked in ("photo", "design") else 2):
+            sf["skipped"] = list(sf.get("skipped") or []) + [asked]
 
     slot = next_slot(sf, cfg)
 

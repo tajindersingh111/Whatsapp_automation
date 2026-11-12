@@ -58,3 +58,20 @@ async def root() -> RedirectResponse:
 @app.get("/dashboard", include_in_schema=False)
 async def dashboard() -> FileResponse:
     return FileResponse(STATIC / "dashboard.html")
+
+
+# Public pages. Meta requires a reachable privacy policy and data deletion URL before an
+# app can go Live, and customers are entitled to find them without an account.
+@app.get("/privacy", include_in_schema=False)
+async def privacy() -> FileResponse:
+    return FileResponse(STATIC / "privacy.html")
+
+
+@app.get("/terms", include_in_schema=False)
+async def terms() -> FileResponse:
+    return FileResponse(STATIC / "terms.html")
+
+
+@app.get("/data-deletion", include_in_schema=False)
+async def data_deletion() -> FileResponse:
+    return FileResponse(STATIC / "data-deletion.html")

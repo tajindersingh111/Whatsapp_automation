@@ -119,6 +119,37 @@ def question(slot: str, cfg: BotConfig) -> str:
     return getattr(cfg.sales_flow, f"ask_{slot}")
 
 
+# Answering a question with nothing but the next question is what makes a bot feel like
+# a bot. Saying back what the customer just gave us costs one line and reads like someone
+# is actually listening. Variants are picked from the message itself, so the same person
+# does not get the same stock phrase twice in a row.
+_ACK: dict[str, tuple[str, ...]] = {
+    "item": ("{v} par? Haan, us par to roz kaam hota hai 👍", "{v} — bilkul ho jaayega."),
+    "photo": ("Photo mil gayi, dekh li 👍", "Mil gayi photo."),
+    "design": ("Design mil gaya, shukriya 🙏", "Mil gaya design, dekh liya 👍"),
+    # "design nahi hai, aap bana do" is an answer too — and thanking them for a file
+    # they never sent is exactly the tell that gives a bot away.
+    "design_team": ("Koi baat nahi, hamari team bana degi 👍", "Theek hai, design hum bana denge."),
+    "size": ("{v} — note kar liya.", "Theek hai, {v}."),
+    "qty": ("{v} — samajh gayi.", "{v}, theek hai."),
+    "city": ("{v} se hain, achha 👍", "Theek hai, {v}."),
+}
+
+
+def ack(slot: str, value, seed: int) -> str:
+    key = "design_team" if slot == "design" and value == "team" else slot
+    options = _ACK.get(key)
+    if not options:
+        return ""
+    line = options[seed % len(options)]
+    if "{v}" in line:
+        if not isinstance(value, str) or not value.strip():
+            return ""
+        said = value.strip()
+        line = line.replace("{v}", said[0].upper() + said[1:])
+    return line
+
+
 def summary(sf: dict) -> str:
     rows = [
         ("Item", sf.get("item")),
@@ -145,6 +176,7 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     if not f.enabled:
         return None, False
 
+    before = {s: sf.get(s) for s in SLOTS}
     absorb(sf, text, kind)
 
     # Already quoted and nothing left to ask: the flow is finished, let the normal
@@ -187,7 +219,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         return reply, True
 
     sf["asked"] = slot
-    lead = f.deflect_text.strip() + "\n\n" if pushing else ""
-    if sf.get("quoted"):
-        lead = ""
-    return lead + question(slot, cfg), False
+    lines = []
+    # Say back whatever they just told us, then ask the next thing.
+    for s in SLOTS:
+        if sf.get(s) and not before.get(s):
+            said = ack(s, sf.get(s), len(text or ""))
+            if said:
+                lines.append(said)
+            break
+    if pushing and not sf.get("quoted"):
+        lines.append(f.deflect_text.strip())
+    lines.append(question(slot, cfg))
+    return "\n\n".join(lines), False

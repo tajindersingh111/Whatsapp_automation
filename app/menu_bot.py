@@ -312,10 +312,21 @@ class MenuBot:
         await self.send(buttons_message("\n\n".join(parts)[:1000], [("menu:main", "Menu"), ("menu:human", self.m.human_label)]))
 
     async def handoff(self, reason: str) -> None:
+        already = self.conv.mode == "human"
         self.conv.mode = "human"
         self.conv.handoff_reason = reason[:500]
         self.result.events.append({"type": "handoff", "reason": reason})
         await self.send(text_message(self.fmt(self.m.handoff_text)))
+        # Someone asking for a person is the most urgent thing that happens here, so the
+        # team hears about it on their own phone. Only on the turn the chat flips over,
+        # not again on every later message in the same handed-over chat.
+        if not already and self.cfg.lead_alert.alert_on_handoff:
+            sf = sales_flow.load(self.state)
+            detail = sales_flow.summary(sf).replace("\n", "; ") or reason
+            sent = await lead_alert.alert_team(
+                self.session, self.tenant, self.cfg, self.contact, f"TEAM SE BAAT · {detail}"
+            )
+            self.result.events.append({"type": "lead_alert", "sent": sent, "on": "handoff"})
 
 
 async def run_menu_bot(session: AsyncSession, *, tenant: Tenant, cfg: BotConfig, contact: Contact, conv: Conversation,

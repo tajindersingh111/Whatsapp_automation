@@ -59,6 +59,9 @@ class LeadAlertConfig(BaseModel):
     # Take the chat off the bot once it is quoted, so the team can close it without
     # the bot talking over them.
     handoff_on_quote: bool = True
+    # Also alert when a customer asks for a person, complains or is handed over for any
+    # other reason. That is more urgent than a quoted lead, not less.
+    alert_on_handoff: bool = True
 
 
 class SalesFlowConfig(BaseModel):
@@ -76,8 +79,8 @@ class SalesFlowConfig(BaseModel):
     # Holding out longer than this on WhatsApp loses the lead.
     price_after_asks: int = 2
 
-    deflect_text: str = "Rate bilkul bata deti hoon ji 👍 Bas ek cheez pooch loon taaki aapko exact rate mile, andaaza nahi."
-    summary_intro: str = "Perfect ji 🙏 Aapki detail note kar li:"
+    deflect_text: str = "Haan rate to abhi batati hoon 👍 Bas ek cheez jaan loon pehle, taaki aapko exact number milay — andaaze ka kya fayda."
+    summary_intro: str = "Perfect 🙏 Ye sab note kar liya maine:"
     price_text: str = (
         "Rate ye rahe 👇\n"
         "*A4 sheet* — 1 se 5 sheet Rs 200/sheet, 10+ sheet Rs 180/sheet\n"
@@ -86,12 +89,12 @@ class SalesFlowConfig(BaseModel):
         "usi hisaab se final rate. Team abhi aapse is number par baat karegi 👍"
     )
 
-    ask_item: str = "Bahut badhiya 👍 Pehle ye bataiye — sticker kis cheez par lagana hai? (mug, bottle, jar, packaging box, glass, ya kuch aur)"
-    ask_photo: str = "Us item ki ek photo bhej dijiye 📷 Isse main bata paungi ki sticker kaisa baithega aur kitna size sahi rahega."
-    ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi, warna high-resolution PNG bhi chalega. Design nahi hai to bata dijiye — hamari team bana deti hai."
-    ask_size: str = "Sticker ka approx size kitna chahiye? (jaise 2 inch ya 3x3 inch) — isi se pata chalta hai ek sheet par kitne aayenge."
-    ask_qty: str = "Aur approx kitne piece chahiye? (ya kitni sheet)"
-    ask_city: str = "Last cheez — aap kis city se hain? Courier aur timeline uske hisaab se batate hain."
+    ask_item: str = "Bahut badhiya 👍 Pehle ye bata dijiye — sticker lagana kis cheez par hai? Mug, bottle, jar, packaging box... ya kuch aur?"
+    ask_photo: str = "Us cheez ki ek photo bhej dijiye na 📷 Dekh kar main sahi size bata paungi, warna andaaza hi rahega."
+    ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi rehti hai, high-resolution PNG bhi chal jaayega. Design nahi hai to bhi koi baat nahi — bata dijiye, hamari team bana deti hai."
+    ask_size: str = "Sticker kitne size ka chahiye? Jaise 2 inch ya 3x3 inch — isi se pata chalta hai ek sheet par kitne aayenge."
+    ask_qty: str = "Aur kitne piece ka soch rahe hain? Approx bhi chalega."
+    ask_city: str = "Last sawaal 🙏 Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
 
 
 class MenuConfig(BaseModel):
@@ -108,7 +111,7 @@ class MenuConfig(BaseModel):
     buy_text: str = "Neeche button dabakar order poora kijiye 🛒"
     variant_text: str = "Kaunsa option chahiye?"
     no_orders_text: str = "Is number par koi order nahi mila. Apna order number bhejiye (jaise 1023)."
-    handoff_text: str = "Thik hai! Hamari team jaldi aapse baat karegi ({hours}). 🙏"
+    handoff_text: str = "Bilkul, abhi bulati hoon unhe 🙏 Aapka message team tak pahuncha diya hai — wo jaldi aapse baat karenge ({hours})."
     not_understood: str = "Maaf kijiye, ye samajh nahi aaya 🙏 Neeche se chuniye ya product ka naam likhiye (jaise 'blue bedsheet')."
     followup_text: str = "Hi {name}! Aapne {product} dekha tha. Order karna ho to neeche button dabaiye, ya koi sawaal ho to poochiye 😊"
 

@@ -183,6 +183,19 @@ class MenuBot:
         # A lead counts as hot once it is quoted AND every question is answered. A
         # customer who bullied the rate out early is not there yet, so the bot keeps
         # qualifying and this fires on the turn that completes the picture.
+        # Someone stepping back is a lead worth a human, not a lost one — the team can
+        # offer a sample or a bulk rate the bot is not allowed to promise.
+        if sf.pop("needs_team", None):
+            sf["alerted"] = True
+            sales_flow.save(self.state, sf)
+            self.conv.mode = "human"
+            self.conv.handoff_reason = f"Backed off — {summary.replace(chr(10), '; ')}"[:500]
+            set_lead_stage(self.contact, "interested", summary.replace("\n", "; ")[:240] or None)
+            sent = await lead_alert.alert_team(
+                self.session, self.tenant, self.cfg, self.contact, f"PEECHE HAT RAHA HAI · {summary}"
+            )
+            self.result.events.append({"type": "lead_alert", "sent": sent, "on": "backed_off"})
+
         complete = sf.get("quoted") and sales_flow.next_slot(sf, self.cfg) is None
         if complete and not sf.get("alerted"):
             sf["alerted"] = True

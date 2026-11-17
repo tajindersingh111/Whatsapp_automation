@@ -109,9 +109,19 @@ class SalesFlowConfig(BaseModel):
     ask_city: str = "Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
     # Asked, not stated — the terms are the team's to set, the bot only learns the
     # customer's preference so the team is not starting from zero on the call.
+    # Not a goodbye. One honest reason to stay, then a human who can actually offer a
+    # sample or a better rate.
     soft_close: str = (
-        "Bilkul ji, koi jaldi nahi 🙏 Jab bhi zaroorat ho, yahin message kar dijiyega — "
-        "rate aur sample dono bhej dungi. HS Company, Jaipur."
+        "Koi baat nahi ji \U0001f64f Ek cheez bata doon \u2014 quantity badhne par rate kaafi neeche "
+        "aa jaata hai, aur sample dekhne ka koi charge nahi hota.\n\n"
+        "Main aapka number team ko de rahi hoon. Wo aapko sample aur apna best rate dono "
+        "bhej denge \u2014 dekh kar aaram se decide kar lijiyega \U0001f44d"
+    )
+    # Said when the customer calls it expensive, which is an objection, not a question.
+    objection_text: str = (
+        "Samajh sakti hoon ji 🙏 Ek baat bata doon — rate quantity ke saath neeche aata hai, "
+        "aur ek sheet par aapke design ke size ke hisaab se kai piece nikal jaate hain, "
+        "to per piece kaafi sasta pad jaata hai."
     )
     ask_payment: str = "Aur payment aap kaise karna pasand karenge — UPI, bank transfer, ya cash? Team isi hisaab se detail bhej degi."
 

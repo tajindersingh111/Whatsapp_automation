@@ -109,6 +109,8 @@ _PRICE_WORDS = {"price", "rate", "rates", "cost", "daam", "bhav", "quotation", "
                 # Complaining about the price is a price message too. Missing these let the
                 # FAQ answer "mehnga hai" with the sticker rate card — to a mug customer.
                 "mehnga", "mahnga", "mehngi", "sasta", "sasti", "budget", "expensive"}
+# The subset that is a complaint rather than a question.
+_OBJECTION_WORDS = {"mehnga", "mahnga", "mehngi", "budget", "expensive", "zyada"}
 
 # Someone stepping back. Pushing the next question at them is how a bot loses a lead
 # that a person would have kept warm.
@@ -369,6 +371,10 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     if not sf.get("quoted") and any(p in low.replace("  ", " ") for p in _BACKING_OFF):
         sf["paused"] = True
         sf["asked"] = None
+        # Backing off is the moment a person would save the sale, not the moment to
+        # stop selling. The bot gives one honest reason to stay and hands the chat to
+        # the team, who can offer a sample or a bulk rate the bot is not allowed to.
+        sf["needs_team"] = True
         return f.soft_close.strip(), False
 
     pushing = asks_price(text)
@@ -412,6 +418,7 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
                 lines.append(said)
             break
     if pushing and not sf.get("quoted"):
-        lines.append(f.deflect_text.strip())
+        objection = bool(_words(text) & _OBJECTION_WORDS)
+        lines.append((f.objection_text if objection else f.deflect_text).strip())
     lines.append(question(slot, sf, cfg))
     return "\n\n".join(lines), False

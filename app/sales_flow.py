@@ -188,8 +188,10 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         if m:
             sf["qty"] = m.group(0).strip()
 
-    # "design nahi hai, aap bana do" is a real answer to the artwork question.
-    if not sf.get("design") and asked == "design" and words & _NO_DESIGN:
+    # "design nahi hai, aap bana do" is a real answer whenever it is said — people
+    # volunteer it while we are still asking for the product photo, and ignoring it
+    # there left the bot asking for artwork over and over.
+    if not sf.get("design") and words & _NO_DESIGN and (asked == "design" or "design" in words or "logo" in words):
         sf["design"] = "team"
 
     # A name only counts when we actually asked for one, and even then it must not look
@@ -337,11 +339,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     # some other slot is not a refusal though — sending the product photo while we asked
     # for artwork is progress, and must not cost them the artwork question.
     filled_any = any(sf.get(s) and not before.get(s) for s in SLOTS)
-    if asked and not sf.get(asked) and not pushing and not filled_any:
+    if asked and not sf.get(asked) and not pushing:
         tries = dict(sf.get("tries") or {})
         tries[asked] = tries.get(asked, 0) + 1
         sf["tries"] = tries
-        if tries[asked] >= (1 if asked in ("photo", "design") else 2):
+        limit = 1 if asked in ("photo", "design") else 2
+        # A message that answered something else is not a refusal, but it cannot buy
+        # the question unlimited retries either — otherwise a chatty customer can keep
+        # the funnel stuck on one slot forever.
+        if tries[asked] >= (limit + 2 if filled_any else limit):
             sf["skipped"] = list(sf.get("skipped") or []) + [asked]
 
     slot = next_slot(sf, cfg)

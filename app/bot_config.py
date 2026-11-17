@@ -73,7 +73,8 @@ class SalesFlowConfig(BaseModel):
     """
 
     enabled: bool = False
-    want_photo: bool = True      # ask for a photo of the item the sticker goes on
+    want_name: bool = True       # open by asking who we are talking to
+    want_photo: bool = True      # ask for a photo of the item the print goes on
     want_design: bool = True     # ask for their artwork
     # How many times a customer may ask for the rate before the bot just gives it.
     # Holding out longer than this on WhatsApp loses the lead.
@@ -89,12 +90,30 @@ class SalesFlowConfig(BaseModel):
         "usi hisaab se final rate. Team abhi aapse is number par baat karegi 👍"
     )
 
-    ask_item: str = "Bahut badhiya 👍 Pehle ye bata dijiye — sticker lagana kis cheez par hai? Mug, bottle, jar, packaging box... ya kuch aur?"
+    # Shown when the customer has not picked a lane yet. {services} is filled from the
+    # catalogue in app/sales_flow.py, so the menu never drifts from what is actually sold.
+    ask_service: str = (
+        "Hum Jaipur mein apni factory se printing aur signage ka kaam karte hain \u2014 "
+        "machine se lekar finishing tak sab yahin hota hai, kuch bahar nahi jaata \U0001f44d\n\n"
+        "Ye sab banate hain:\n{services}\n\n"
+        "Aapko inme se kya chahiye? Naam likh dijiye, main uski detail bata deti hoon."
+    )
+    # {prompt} and {options} come from the chosen service's fork.
+    ask_variant: str = "{prompt}\n{options}"
+    ask_name: str = "Namaste 🙏 Main Simran, HS Company se. Aapka naam jaan lun?"
+    ask_item: str = "Bahut badhiya 👍 Pehle ye bata dijiye — print lagana kis cheez par hai?"
     ask_photo: str = "Us cheez ki ek photo bhej dijiye na 📷 Dekh kar main sahi size bata paungi, warna andaaza hi rahega."
     ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi rehti hai, high-resolution PNG bhi chal jaayega. Design nahi hai to bhi koi baat nahi — bata dijiye, hamari team bana deti hai."
-    ask_size: str = "Sticker kitne size ka chahiye? Jaise 2 inch ya 3x3 inch — isi se pata chalta hai ek sheet par kitne aayenge."
+    ask_size: str = "{name} ji, print kitne size ka chahiye? Jaise 2 inch, 3x3 inch, ya A4 — size se hi rate banta hai."
     ask_qty: str = "Aur kitne piece ka soch rahe hain? Approx bhi chalega."
     ask_city: str = "Last sawaal 🙏 Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
+
+    # Everything except UV DTF is priced by the team, so the bot never invents a number
+    # for a job that has no published rate.
+    quote_by_team: str = (
+        "Is kaam ka rate size, material aur quantity par banta hai, isliye main andaaza nahi dungi — "
+        "hamari team aapko exact quote bhejegi, aur wo abhi aapse is number par baat karegi 👍"
+    )
 
 
 class MenuConfig(BaseModel):

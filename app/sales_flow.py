@@ -108,6 +108,13 @@ _PRICE_WORDS = {"price", "rate", "rates", "cost", "daam", "bhav", "quotation", "
                 "charge", "charges", "kitna", "kitne", "kitni", "paisa", "paise", "rupaye", "rupees"}
 _NO_DESIGN = {"nahi", "nhi", "no", "nahin", "banado", "banwana", "banwane", "banaoge", "aap", "tum"}
 _NOT_A_NAME = {"hi", "hello", "hey", "namaste", "yes", "haan", "ok", "okay", "sticker", "price"}
+# Every word that names something we sell or something it goes on. Anything containing
+# one of these is an answer about the job, never a person's name.
+_PRODUCT_WORDS = (
+    {w for _k, _l, keys in SERVICES for w in keys}
+    | {w for _prompt, opts in VARIANTS.values() for _label, keys in opts for w in keys}
+    | {"par", "pe", "chahiye", "karwana", "karwani", "banwana", "print", "printing"}
+)
 _WORD_RE = re.compile("[0-9A-Za-zÀ-ɏऀ-ॿ]+")
 
 # "A4" is the commonest answer a print customer gives, so it has to count as a size
@@ -185,12 +192,17 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
     if not sf.get("design") and asked == "design" and words & _NO_DESIGN:
         sf["design"] = "team"
 
-    # A name only counts when we actually asked for one — otherwise "sticker chahiye"
-    # would be filed as somebody's name.
+    # A name only counts when we actually asked for one, and even then it must not look
+    # like an answer to some other question — "mug par" is an item, not a person, and
+    # greeting someone as "Mug Par ji" is the kind of thing nobody forgives.
     if not sf.get("name") and asked == "name":
         cleaned = re.sub(r"\b(mera|naam|name|hai|is|ji|my)\b", " ", (text or "").lower()).strip(" .,-")
         cleaned = " ".join(cleaned.split())
-        if cleaned and len(cleaned) <= 40 and not (_words(cleaned) & _NOT_A_NAME) and not asks_price(cleaned):
+        looks_like_product = bool(_words(cleaned) & _PRODUCT_WORDS)
+        if (cleaned and len(cleaned.split()) <= 4 and len(cleaned) <= 40
+                and not (_words(cleaned) & _NOT_A_NAME)
+                and not looks_like_product and not asks_price(cleaned)
+                and not _SIZE_RE.search(cleaned) and not _QTY_RE.search(cleaned)):
             sf["name"] = cleaned.title()
 
 

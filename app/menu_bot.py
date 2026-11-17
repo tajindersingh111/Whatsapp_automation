@@ -103,7 +103,11 @@ class MenuBot:
 
     async def on_text(self, text: str, kind: str = "text") -> None:
         norm, words = _norm(text), _words(text)
-        if norm in GREETINGS or (words and words <= GREETINGS | {"ji", "sir", "mam", "bhai"}):
+        greeting = norm in GREETINGS or (words and words <= GREETINGS | {"ji", "sir", "mam", "bhai"})
+        # With the funnel on, "hi" is the start of the sale, not a request for the menu.
+        # Sending the button menu first made the bot ask for a name one turn late, which
+        # then landed the customer's real answer in the wrong slot.
+        if greeting and not self.cfg.sales_flow.enabled:
             return await self.welcome()
         triggers = {t.lower() for t in self.cfg.handoff_triggers}
         if words & HUMAN_WORDS or any(t in norm for t in triggers):

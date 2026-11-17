@@ -106,7 +106,10 @@ class SalesFlowConfig(BaseModel):
     ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi rehti hai, high-resolution PNG bhi chal jaayega. Design nahi hai to bhi koi baat nahi — bata dijiye, hamari team bana deti hai."
     ask_size: str = "{name} ji, print kitne size ka chahiye? Jaise 2 inch, 3x3 inch, ya A4 — size se hi rate banta hai."
     ask_qty: str = "Aur kitne piece ka soch rahe hain? Approx bhi chalega."
-    ask_city: str = "Last sawaal 🙏 Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
+    ask_city: str = "Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
+    # Asked, not stated — the terms are the team's to set, the bot only learns the
+    # customer's preference so the team is not starting from zero on the call.
+    ask_payment: str = "Aur payment aap kaise karna pasand karenge — UPI, bank transfer, ya cash? Team isi hisaab se detail bhej degi."
 
     # Everything except UV DTF is priced by the team, so the bot never invents a number
     # for a job that has no published rate.

@@ -146,8 +146,16 @@ class MenuBot:
         appended to it, so the customer is never stonewalled to keep the flow moving.
         """
         sf = sales_flow.load(self.state)
-        faq = None if sales_flow.asks_price(text) else await match_faq(self.session, self.tenant.id, self.cfg, text)
+        pending = sf.get("asked")
         reply, quoted = sales_flow.advance(sf, text, kind, self.cfg)
+        # A word can be both an answer and an FAQ hit: a customer typing their city
+        # matched the "address" answer, so the bot recited its own address back at
+        # someone who had just given theirs. If the message answered the question we
+        # asked, it is an answer, not a question.
+        answered_pending = bool(pending and sf.get(pending))
+        faq = None
+        if not answered_pending and not sales_flow.asks_price(text):
+            faq = await match_faq(self.session, self.tenant.id, self.cfg, text)
         sales_flow.save(self.state, sf)
         if reply is None and faq is None:
             return False

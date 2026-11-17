@@ -30,7 +30,7 @@ import re
 
 from app.bot_config import BotConfig
 
-SLOTS = ("name", "service", "variant", "photo", "design", "size", "qty", "city")
+SLOTS = ("name", "service", "variant", "photo", "design", "size", "qty", "city", "payment")
 
 # The lanes the factory sells. First match wins, and UV DTF goes first on purpose:
 # "DTF" alone means garment printing, but "UV DTF" means stickers, and stickers are the
@@ -236,8 +236,23 @@ def service_menu() -> str:
     return "\n".join(f"• {label}" for _k, label, _w in SERVICES)
 
 
+# Repeating a question word for word is the loudest tell that nobody is really there.
+# A second ask gets a shorter nudge instead, the way a person would follow up.
+_RETRY: dict[str, str] = {
+    "photo": "Us item ki ek photo mil jaye to size pakka bata dungi 📷",
+    "design": "Design ya logo bhej dijiyega, phir layout bana ke dikha deti hoon.",
+    "size": "Size ka andaaza bhi chalega — kitne inch ka chahiye?",
+    "qty": "Approx kitne piece? Bas moti si ginti bata dijiye.",
+    "city": "City bata dijiye, courier uske hisaab se dekh lungi.",
+    "name": "Naam bata dijiye na, baat karne mein aasani rahegi 🙂",
+    "payment": "Payment ka mode bata dijiye — UPI, bank ya cash?",
+}
+
+
 def question(slot: str, sf: dict, cfg: BotConfig) -> str:
     f = cfg.sales_flow
+    if (sf.get("tries") or {}).get(slot) and slot in _RETRY:
+        return _RETRY[slot]
     if slot == "service":
         return f.ask_service.replace("{services}", service_menu())
     if slot == "variant":
@@ -255,15 +270,16 @@ def question(slot: str, sf: dict, cfg: BotConfig) -> str:
 # a bot. Saying back what the customer just gave us costs one line and reads like someone
 # is actually listening.
 _ACK: dict[str, tuple[str, ...]] = {
-    "name": ("Shukriya {v} ji 🙏", "Namaste {v} ji 🙏"),
-    "service": ("{v} — bilkul, ye hamara roz ka kaam hai 👍", "{v}, theek hai."),
-    "variant": ("{v} par? Haan, us par achha aata hai 👍", "{v} — note kar liya."),
-    "photo": ("Photo mil gayi, dekh li 👍", "Mil gayi photo."),
-    "design": ("Design mil gaya, shukriya 🙏", "Mil gaya design, dekh liya 👍"),
-    "design_team": ("Koi baat nahi, hamari team bana degi 👍", "Theek hai, design hum bana denge."),
-    "size": ("{v} — note kar liya.", "Theek hai, {v}."),
-    "qty": ("{v} — samajh gayi.", "{v}, theek hai."),
-    "city": ("{v} se hain, achha 👍", "Theek hai, {v}."),
+    "name": ("Shukriya {v} ji 🙏", "Namaste {v} ji 🙏", "{v} ji, swagat hai 🙏"),
+    "service": ("{v} — bilkul, ye hamara roz ka kaam hai 👍", "{v}, theek hai.", "Haan ji, {v} ka kaam khoob hota hai yahan."),
+    "variant": ("{v} par? Haan, us par achha aata hai 👍", "{v} — note kar liya.", "{v}, bilkul ho jaayega."),
+    "photo": ("Photo mil gayi, dekh li 👍", "Mil gayi photo.", "Haan, dikh gayi 👍"),
+    "design": ("Design mil gaya, shukriya 🙏", "Mil gaya design, dekh liya 👍", "Aa gaya, dekh liya maine 👍"),
+    "design_team": ("Koi baat nahi, hamari team bana degi 👍", "Theek hai, design hum bana denge.", "Arre koi dikkat nahi, bana denge hum."),
+    "size": ("{v} — note kar liya.", "Theek hai, {v}.", "{v}, likh liya."),
+    "qty": ("{v} — samajh gayi.", "{v}, theek hai.", "Achha, {v}."),
+    "city": ("{v} se hain, achha 👍", "Theek hai, {v}.", "{v} — note kiya."),
+    "payment": ("Theek hai ji 👍", "Samajh gayi.", "Note kar liya 👍"),
 }
 
 
@@ -290,6 +306,7 @@ def summary(sf: dict) -> str:
         ("Size", sf.get("size")),
         ("Quantity", sf.get("qty")),
         ("City", sf.get("city")),
+        ("Payment", sf.get("payment")),
         ("Design", {"team": "team banayegi", True: "mil gaya"}.get(sf.get("design"))),
     ]
     return "\n".join(f"• {k}: {v}" for k, v in rows if v)
@@ -325,7 +342,7 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
 
     # A free-text answer to the question we actually asked — take it at face value
     # rather than dropping it.
-    if asked in ("city", "variant") and not sf.get(asked):
+    if asked in ("city", "variant", "payment") and not sf.get(asked):
         cleaned = (text or "").strip()
         if cleaned and len(cleaned) <= 60 and not asks_price(cleaned):
             sf[asked] = cleaned
@@ -346,8 +363,9 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         limit = 1 if asked in ("photo", "design") else 2
         # A message that answered something else is not a refusal, but it cannot buy
         # the question unlimited retries either — otherwise a chatty customer can keep
-        # the funnel stuck on one slot forever.
-        if tries[asked] >= (limit + 2 if filled_any else limit):
+        # the funnel stuck on one slot forever. One extra nudge, then move on: asking a
+        # third time is what makes a bot feel like a bot.
+        if tries[asked] >= (limit + 1 if filled_any else limit):
             sf["skipped"] = list(sf.get("skipped") or []) + [asked]
 
     slot = next_slot(sf, cfg)

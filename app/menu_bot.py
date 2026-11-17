@@ -164,7 +164,10 @@ class MenuBot:
         if faq:
             self.result.events.append({"type": "faq", "source": faq.source})
             parts.append(faq.answer)
-        if reply:
+        # Several stored answers end in a question of their own. Stacking the funnel's
+        # question on top asks two things at once, which nobody answers well — let the
+        # answer stand and ask again next turn.
+        if reply and not (faq and faq.answer.rstrip().endswith("?")):
             parts.append(reply)
         body = "\n\n".join(parts)
 

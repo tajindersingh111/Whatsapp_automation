@@ -109,6 +109,10 @@ class SalesFlowConfig(BaseModel):
     ask_city: str = "Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
     # Asked, not stated — the terms are the team's to set, the bot only learns the
     # customer's preference so the team is not starting from zero on the call.
+    soft_close: str = (
+        "Bilkul ji, koi jaldi nahi 🙏 Jab bhi zaroorat ho, yahin message kar dijiyega — "
+        "rate aur sample dono bhej dungi. HS Company, Jaipur."
+    )
     ask_payment: str = "Aur payment aap kaise karna pasand karenge — UPI, bank transfer, ya cash? Team isi hisaab se detail bhej degi."
 
     # Everything except UV DTF is priced by the team, so the bot never invents a number

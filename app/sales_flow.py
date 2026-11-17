@@ -105,7 +105,15 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
 }
 
 _PRICE_WORDS = {"price", "rate", "rates", "cost", "daam", "bhav", "quotation", "quote",
-                "charge", "charges", "kitna", "kitne", "kitni", "paisa", "paise", "rupaye", "rupees"}
+                "charge", "charges", "kitna", "kitne", "kitni", "paisa", "paise", "rupaye", "rupees",
+                # Complaining about the price is a price message too. Missing these let the
+                # FAQ answer "mehnga hai" with the sticker rate card — to a mug customer.
+                "mehnga", "mahnga", "mehngi", "sasta", "sasti", "budget", "expensive"}
+
+# Someone stepping back. Pushing the next question at them is how a bot loses a lead
+# that a person would have kept warm.
+_BACKING_OFF = ("chhodo", "chodo", "rehne do", "rahne do", "nahi chahiye", "nhi chahiye",
+                "baad mein", "abhi nahi", "sochta hoon", "sochti hoon", "soch kar", "dekhte hain")
 _NO_DESIGN = {"nahi", "nhi", "no", "nahin", "banado", "banwana", "banwane", "banaoge", "aap", "tum"}
 _NOT_A_NAME = {"hi", "hello", "hey", "namaste", "yes", "haan", "ok", "okay", "sticker", "price"}
 # Every word that names something we sell or something it goes on. Anything containing
@@ -220,6 +228,8 @@ def _skip(slot: str, cfg: BotConfig) -> bool:
 
 
 def next_slot(sf: dict, cfg: BotConfig) -> str | None:
+    if sf.get("paused"):
+        return None
     given_up = set(sf.get("skipped") or [])
     for slot in SLOTS:
         if slot in given_up or _skip(slot, cfg):
@@ -340,12 +350,26 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     if sf.get("quoted") and next_slot(sf, cfg) is None:
         return None, False
 
+    # Once someone has stepped back, stay stepped back. next_slot() returns None while
+    # paused, and without this that reads as "nothing left to ask" and fires a quote at
+    # the customer who just said not now.
+    if sf.get("paused"):
+        return None, False
+
     # A free-text answer to the question we actually asked — take it at face value
     # rather than dropping it.
     if asked in ("city", "variant", "payment") and not sf.get(asked):
         cleaned = (text or "").strip()
         if cleaned and len(cleaned) <= 60 and not asks_price(cleaned):
             sf[asked] = cleaned
+
+    # A customer who says "rehne do" gets a soft close, not another question. The funnel
+    # stops asking; they can still ask whatever they like and the team can pick it up.
+    low = " " + " ".join(_words(text)) + " "
+    if not sf.get("quoted") and any(p in low.replace("  ", " ") for p in _BACKING_OFF):
+        sf["paused"] = True
+        sf["asked"] = None
+        return f.soft_close.strip(), False
 
     pushing = asks_price(text)
     if pushing:

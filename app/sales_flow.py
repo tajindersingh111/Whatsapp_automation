@@ -425,6 +425,13 @@ def summary(sf: dict) -> str:
     return "\n".join(f"• {k}: {v}" for k, v in rows if v)
 
 
+_STALE_TAIL_RE = re.compile(
+    r"[,.;]?\s*(?:aur\s+)?(?:wo\s+|team\s+)?(?:abhi\s+)?aapse\s+is\s+number\s+par\s+"
+    r"baat\s+karegi\s*\U0001f44d?\s*$",
+    re.I,
+)
+
+
 def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
     """What we know, then a price only where there is a published one to give."""
     f = cfg.sales_flow
@@ -434,7 +441,14 @@ def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
         parts.append(f.summary_intro.strip() + "\n" + s)
     # Only UV DTF has a rate card. Showing sheet rates for a t-shirt or a signage job
     # would be a number we cannot stand behind.
-    parts.append(f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip())
+    body = f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip()
+    # A tenant config saved before the closing line was split out still carries that
+    # line inside the rate text, and PUT /config freezes every default into the stored
+    # JSON. Dropping the duplicate beats saying it twice in one message.
+    trimmed = _STALE_TAIL_RE.sub("", body).rstrip(" ,;\u2014-")
+    if trimmed and trimmed[-1].isalnum():
+        trimmed += "."
+    parts.append(trimmed or body)
     # Saying "team abhi call karegi" and then asking another question in the same breath
     # is the contradiction that gives a bot away. When the rate came out early because
     # they pushed for it, the close waits until the questions are actually done.

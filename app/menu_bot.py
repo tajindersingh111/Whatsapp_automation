@@ -35,6 +35,20 @@ GREETINGS = {
 }
 HUMAN_WORDS = {"human", "agent", "person", "insaan", "team", "call", "complaint", "shikayat", "refund", "damaged",
                "damage", "toota", "tuta", "kharab", "broken", "wrong", "galat", "manager", "owner", "baat"}
+# Something has gone wrong — a person takes over whatever else is going on.
+COMPLAINT_WORDS = {"complaint", "shikayat", "refund", "damaged", "damage", "toota", "tuta",
+                   "kharab", "broken", "galat", "return", "paisa", "cancel"}
+# An actual request for a person, not just the word "team" in passing. The funnel says
+# "hamari team bana deti hai" itself, so a customer answering "haan team bana degi" was
+# being yanked out of the sale by the bare word.
+_WANTS_HUMAN = re.compile(
+    r"(team|kisi|aap|insaan|human|agent|banda|manager|owner|sir|madam|expert)\s*(se|ko|sai)?\s*"
+    r"(baat|bat|call|phone|connect|milao|bulao|batao)"
+    r"|(baat|bat)\s*kar(ni|na|wa|o|lo)"
+    r"|call\s*(me|karo|kar|kijiye|back|karna)"
+    r"|(phone|number)\s*(karo|kar|do|dijiye)"
+    r"|real\s*person|live\s*agent|talk\s*to"
+    r"|\b(human|agent|insaan|manager)\b", re.I)
 TRACK_WORDS = {"track", "tracking", "status", "kahan", "kaha", "kidhar", "where", "awb", "dispatch", "shipped", "pahuncha"}
 WHEN_WORDS = {"kab", "aayega", "ayega", "aaega", "late", "delay", "abhi", "tak"}
 _ORDER_NO = re.compile(r"#?\b([A-Za-z]{0,4}-?\d{3,12}(?:-\d+)*)\b")
@@ -110,7 +124,14 @@ class MenuBot:
         if greeting and not self.cfg.sales_flow.enabled:
             return await self.welcome()
         triggers = {t.lower() for t in self.cfg.handoff_triggers}
-        if words & HUMAN_WORDS or any(t in norm for t in triggers):
+        if self.cfg.sales_flow.enabled:
+            # Mid-sale the bar is higher: a complaint, or a plain request for a person.
+            # Matching the bare word "team" or "call" here threw away qualified leads
+            # mid-question, which is worse than a handoff arriving one message late.
+            wants_human = bool(words & COMPLAINT_WORDS) or bool(_WANTS_HUMAN.search(norm))
+        else:
+            wants_human = bool(words & HUMAN_WORDS)
+        if wants_human or any(t in norm for t in triggers):
             return await self.handoff(f"Customer asked: {text[:200]}")
         if words & TRACK_WORDS or ("order" in words and (_ORDER_NO.search(text) or words & WHEN_WORDS)):
             number = _ORDER_NO.search(text)
@@ -125,6 +146,8 @@ class MenuBot:
             self.result.events.append({"type": "faq", "source": faq.source})
             self.state["misses"] = 0
             if len(faq.answer) <= 1000:
+                if self.cfg.sales_flow.enabled:
+                    return await self.send(text_message(faq.answer))
                 return await self.send(buttons_message(faq.answer, [("menu:products", self.m.products_label), ("menu:human", self.m.human_label)]))
             return await self.send(text_message(faq.answer))
 
@@ -137,6 +160,8 @@ class MenuBot:
         self.state["misses"] = int(self.state.get("misses", 0)) + 1
         if not self.state.get("greeted"):
             return await self.welcome()
+        if self.cfg.sales_flow.enabled:
+            return await self.send(text_message(self.fmt(self.m.not_understood)))
         await self.send(buttons_message(self.fmt(self.m.not_understood), self.main_buttons()))
 
     async def sales_step(self, text: str, kind: str) -> bool:
@@ -206,10 +231,10 @@ class MenuBot:
             sent = await lead_alert.alert_team(self.session, self.tenant, self.cfg, self.contact, summary)
             self.result.events.append({"type": "lead_alert", "sent": sent})
 
-        if len(body) <= 1000:
-            await self.send(buttons_message(body, [("menu:human", self.m.human_label)]))
-        else:
-            await self.send(text_message(body))
+        # No buttons. A person answering WhatsApp does not attach a menu to every
+        # sentence, and the quick-reply chip under each line was the loudest thing
+        # saying "this is software".
+        await self.send(text_message(body))
         return True
 
     async def on_payload(self, payload: str) -> None:
@@ -327,6 +352,8 @@ class MenuBot:
                 text = f"Order {order_number} nahi mila. Number check karke dobara bhejiye."
             else:
                 text = self.m.no_orders_text
+            if self.cfg.sales_flow.enabled:
+                return await self.send(text_message(text))
             return await self.send(buttons_message(text, [("menu:human", self.m.human_label), ("menu:main", "Menu")]))
         parts = []
         for o in orders[:3]:

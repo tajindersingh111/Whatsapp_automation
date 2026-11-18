@@ -87,8 +87,15 @@ class SalesFlowConfig(BaseModel):
         "*A4 sheet* — 1 se 5 sheet Rs 200/sheet, 10+ sheet Rs 180/sheet\n"
         "*A3 sheet* — 1 se 5 sheet Rs 300/sheet, 5+ sheet Rs 280/sheet\n\n"
         "Aapke design ke size se ek sheet par kitne stickers aayenge, team layout bana kar exact bata degi — "
-        "usi hisaab se final rate. Team abhi aapse is number par baat karegi 👍"
+        "usi hisaab se final rate."
     )
+    # The closing line, kept apart from the rate so it is only said when there is
+    # genuinely nothing left to ask.
+    quote_tail: str = "Team abhi aapse is number par baat karegi 👍"
+    # Said when the last question gets answered after the rate already went out.
+    closing_intro: str = "Bas ji, pura detail note ho gaya 🙏"
+    # Said instead when the rate came out early because the customer pushed for it.
+    quote_more: str = "Bas ek-do cheez reh gayi — wo bata dijiye, phir team exact layout aur final rate ke saath aapse baat karegi 👍"
 
     # Shown when the customer has not picked a lane yet. {services} is filled from the
     # catalogue in app/sales_flow.py, so the menu never drifts from what is actually sold.
@@ -117,6 +124,12 @@ class SalesFlowConfig(BaseModel):
         "Main aapka number team ko de rahi hoon. Wo aapko sample aur apna best rate dono "
         "bhej denge \u2014 dekh kar aaram se decide kar lijiyega \U0001f44d"
     )
+    # UV DTF does not bond to fabric. Saying so plainly, and moving them to the lane
+    # that can do it, keeps the lead instead of quoting the wrong process.
+    fabric_redirect: str = (
+        "Ek baat bata doon ji — UV DTF sticker kapde par nahi chipakta, wo hard surface ke liye hai. "
+        "Kapde ke liye hamari DTF machine alag hai, aur wo wash mein bhi nikalta nahi. Usi hisaab se aage badhte hain 👍"
+    )
     # Said when the customer calls it expensive, which is an objection, not a question.
     objection_text: str = (
         "Samajh sakti hoon ji 🙏 Ek baat bata doon — rate quantity ke saath neeche aata hai, "
@@ -129,7 +142,7 @@ class SalesFlowConfig(BaseModel):
     # for a job that has no published rate.
     quote_by_team: str = (
         "Is kaam ka rate size, material aur quantity par banta hai, isliye main andaaza nahi dungi — "
-        "hamari team aapko exact quote bhejegi, aur wo abhi aapse is number par baat karegi 👍"
+        "hamari team aapko exact quote bhejegi."
     )
 
 

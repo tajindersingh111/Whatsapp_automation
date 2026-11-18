@@ -61,15 +61,21 @@ _SERVICE_LABEL = {k: label for k, label, _ in SERVICES}
 # The fork inside each lane. Catching this early is what stops a fabric job being
 # quoted at sticker rates.
 VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
-    "uvdtf": ("Kis cheez par lagana hai?", [
-        ("mug", {"mug", "mugs", "cup", "cups"}),
-        ("bottle", {"bottle", "bottles", "sipper", "tumbler", "flask", "steel"}),
-        ("jar", {"jar", "jars", "dabba", "container"}),
-        ("packaging box", {"packaging", "box", "boxes", "carton", "kraft", "pouch", "packing"}),
-        ("glass", {"glass", "kaanch", "kanch", "mirror"}),
-        ("acrylic / wood / metal", {"acrylic", "wood", "wooden", "mdf", "metal", "aluminium"}),
-        ("gift item", {"gift", "hamper", "trophy", "memento"}),
-        ("laptop / helmet / diary", {"laptop", "helmet", "diary", "notebook", "mobile", "cover"}),
+    # UV DTF sticks by surface, not by product name: a glass jar and a ceramic mug are
+    # the same job, and a cotton bag is a different process entirely. Asking by surface
+    # is how the factory actually decides, and it catches the fabric mistake up front.
+    # Item words stay in the keywords so "mug" still lands in the right bucket.
+    "uvdtf": ("UV DTF smooth aur hard surface par sabse achha baithta hai. Aapka item kaunsa hai?", [
+        ("smooth hard surface (glass, ceramic, steel, acrylic)",
+         {"glass", "kaanch", "kanch", "ceramic", "mug", "mugs", "cup", "cups", "steel", "metal",
+          "acrylic", "aluminium", "mirror", "tile", "plate", "trophy", "laptop", "helmet", "mobile"}),
+        ("curved item (bottle, sipper, jar)",
+         {"bottle", "bottles", "sipper", "tumbler", "flask", "jar", "jars", "container", "pen", "dabba"}),
+        ("packaging (kraft box, carton, pouch)",
+         {"packaging", "box", "boxes", "carton", "kraft", "pouch", "packet", "packing", "chocolate"}),
+        ("wood ya leather (diary, wooden box, wallet)",
+         {"wood", "wooden", "mdf", "ply", "leather", "diary", "notebook", "planner", "frame"}),
+        ("kapda / fabric", {"kapda", "kapde", "kapra", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
     ]),
     "fabric": ("Kis garment par?", [
         ("t-shirt", {"tshirt", "tshirts", "shirt", "tee"}),
@@ -137,6 +143,19 @@ _SIZE_RE = re.compile(
     re.I,
 )
 _QTY_RE = re.compile(r"(\d{1,6})\s*(piece|pieces|pcs|pc|nos|sticker|stickers|sheet|sheets|mug|mugs|bottle|bottles|box|boxes|tshirt|tshirts|unit|units)\b", re.I)
+# "500", "500-600", "500 approx" — nobody repeats the unit they were just asked about.
+# Only read as a quantity when the quantity was the question, so a pincode or a price
+# mentioned elsewhere in the chat never lands in this slot.
+_BARE_QTY_RE = re.compile(r"\b\d{1,6}(?:\s*(?:-|\u2013|to)\s*\d{1,6})?\b")
+
+# Said in answer to "payment kaise karenge?" — and often volunteered much earlier.
+_PAYMENT_LABEL = {
+    "upi": "UPI", "gpay": "UPI", "googlepay": "UPI", "phonepe": "UPI", "paytm": "UPI",
+    "bank": "bank transfer", "transfer": "bank transfer", "neft": "bank transfer",
+    "rtgs": "bank transfer", "imps": "bank transfer",
+    "cash": "cash", "cod": "cash on delivery", "card": "card", "cheque": "cheque",
+}
+_PAYMENT_WORDS = set(_PAYMENT_LABEL)
 
 
 def _words(text: str) -> set[str]:
@@ -157,11 +176,53 @@ def save(state: dict, sf: dict) -> None:
     state["sf"] = sf
 
 
-def _match(words: set[str], table) -> str | None:
+def _match(words: set[str], table) -> tuple[str, str] | None:
+    """Returns (bucket label, the word the customer actually used)."""
     for label, keys in table:
-        if words & keys:
-            return label
+        hit = words & keys
+        if hit:
+            return label, sorted(hit)[0]
     return None
+
+
+def _take(sf: dict, slot: str, text: str, loose: bool = False) -> None:
+    """Read a free-text message into one slot, when it plausibly belongs there.
+
+    ``loose`` is for the slot we actually just asked about, where almost anything the
+    customer types is meant as the answer. Without it the same text is being offered
+    speculatively to a slot nobody asked about, so the checks have to be stricter.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned or len(cleaned) > 60 or asks_price(cleaned):
+        return
+    words = _words(cleaned)
+
+    if slot == "qty":
+        m = _BARE_QTY_RE.search(cleaned)
+        if m and not _SIZE_RE.search(cleaned):
+            sf["qty"] = m.group(0).strip() + " piece"
+        return
+
+    if slot == "city":
+        # A payment word, an item or a bare number is a late answer to another question,
+        # not a city. "City: cash" on the team's alert is exactly the kind of thing that
+        # makes the whole chat look automated.
+        if words & (_PAYMENT_WORDS | _PRODUCT_WORDS | _NOT_A_NAME):
+            return
+        if re.fullmatch(r"[\d\s,.\u2013-]+", cleaned):
+            return
+        if not loose and (len(cleaned.split()) > 3
+                          or not re.fullmatch(r"[A-Za-z\u0900-\u097f .,'-]+", cleaned)):
+            return
+        sf["city"] = cleaned
+        return
+
+    if slot == "payment" and loose:
+        sf["payment"] = cleaned
+        return
+
+    if slot == "variant" and loose:
+        sf["variant"] = cleaned
 
 
 def absorb(sf: dict, text: str, kind: str = "text") -> None:
@@ -185,8 +246,17 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         table = VARIANTS.get(sf["service"])
         if table:
             found = _match(words, table[1])
-            if found:
-                sf["variant"] = found
+            label = found[0] if found else None
+            if label == "kapda / fabric":
+                # Not a UV DTF job at all — move them to the lane that can actually do it
+                # rather than quoting sticker rates for a garment.
+                sf["service"] = "fabric"
+                sf["switched_from_uvdtf"] = True
+            elif found:
+                sf["variant"] = label
+                # Keep their own word too: "smooth hard surface" tells the team how it
+                # will print, "mug" tells them what they are quoting.
+                sf["item_said"] = found[1]
 
     if not sf.get("size"):
         m = _SIZE_RE.search(text or "")
@@ -197,6 +267,18 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         m = _QTY_RE.search(text or "")
         if m:
             sf["qty"] = m.group(0).strip()
+        elif asked == "qty":
+            bare = _BARE_QTY_RE.search(text or "")
+            if bare and not _SIZE_RE.search(text or ""):
+                sf["qty"] = bare.group(0).strip() + " piece"
+
+    # Taken whenever it is said, not only when asked. People answer the payment question
+    # three messages early, and re-asking something they already told us is the single
+    # most bot-like thing this flow can do.
+    if not sf.get("payment"):
+        hit = words & _PAYMENT_WORDS
+        if hit:
+            sf["payment"] = _PAYMENT_LABEL[sorted(hit)[0]]
 
     # "design nahi hai, aap bana do" is a real answer whenever it is said — people
     # volunteer it while we are still asking for the product photo, and ignoring it
@@ -271,7 +353,7 @@ def question(slot: str, sf: dict, cfg: BotConfig) -> str:
         table = VARIANTS.get(sf.get("service") or "")
         if table:
             prompt, options = table
-            opts = " / ".join(label for label, _ in options)
+            opts = "\n".join("\u2022 " + label for label, _ in options)
             return f.ask_variant.replace("{prompt}", prompt).replace("{options}", opts)
     text = getattr(f, f"ask_{slot}")
     first = (sf.get("name") or "").split(" ")[0]
@@ -310,11 +392,30 @@ def ack(slot: str, value, seed: int) -> str:
     return line
 
 
+def _short_item(sf: dict) -> str:
+    bucket = re.sub(r"\s*\([^)]*\)", "", sf.get("variant") or "").strip()
+    return sf.get("item_said") or bucket
+
+
+def _item_line(sf: dict) -> str | None:
+    """"mug (smooth hard surface)" — their word, then how it prints."""
+    bucket = sf.get("variant")
+    if not bucket:
+        return None
+    # The bucket labels carry examples for the customer; the team does not need them
+    # repeated inside a bracket inside a bracket.
+    short = re.sub(r"\s*\([^)]*\)", "", bucket).strip()
+    said = sf.get("item_said")
+    if said and said.lower() not in short.lower():
+        return f"{said} ({short})"
+    return short
+
+
 def summary(sf: dict) -> str:
     rows = [
         ("Naam", sf.get("name")),
         ("Service", _SERVICE_LABEL.get(sf.get("service") or "", sf.get("service"))),
-        ("Item", sf.get("variant")),
+        ("Item", _item_line(sf)),
         ("Size", sf.get("size")),
         ("Quantity", sf.get("qty")),
         ("City", sf.get("city")),
@@ -324,7 +425,7 @@ def summary(sf: dict) -> str:
     return "\n".join(f"• {k}: {v}" for k, v in rows if v)
 
 
-def quote(sf: dict, cfg: BotConfig) -> str:
+def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
     """What we know, then a price only where there is a published one to give."""
     f = cfg.sales_flow
     parts = []
@@ -334,6 +435,10 @@ def quote(sf: dict, cfg: BotConfig) -> str:
     # Only UV DTF has a rate card. Showing sheet rates for a t-shirt or a signage job
     # would be a number we cannot stand behind.
     parts.append(f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip())
+    # Saying "team abhi call karegi" and then asking another question in the same breath
+    # is the contradiction that gives a bot away. When the rate came out early because
+    # they pushed for it, the close waits until the questions are actually done.
+    parts.append((f.quote_tail if final else f.quote_more).strip())
     return "\n\n".join(parts)
 
 
@@ -350,6 +455,16 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     # Already quoted and nothing left to ask: the funnel is finished, let the normal
     # FAQ / fallback path own the conversation again.
     if sf.get("quoted") and next_slot(sf, cfg) is None:
+        # The rate went out early because they pushed for it, so the questions carried
+        # on afterwards and the last one has only now been answered. Close it off: the
+        # team's alert needs the full picture and the customer needs to hear that a
+        # person is coming. Silence here reads as the bot having lost interest.
+        if not sf.get("closed"):
+            sf["closed"] = True
+            sf["asked"] = None
+            if any(sf.get(s_) and not before.get(s_) for s_ in SLOTS):
+                return (f.closing_intro.strip() + "\n" + summary(sf)
+                        + "\n\n" + f.quote_tail.strip()), True
         return None, False
 
     # Once someone has stepped back, stay stepped back. next_slot() returns None while
@@ -360,10 +475,8 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
 
     # A free-text answer to the question we actually asked — take it at face value
     # rather than dropping it.
-    if asked in ("city", "variant", "payment") and not sf.get(asked):
-        cleaned = (text or "").strip()
-        if cleaned and len(cleaned) <= 60 and not asks_price(cleaned):
-            sf[asked] = cleaned
+    if asked in ("city", "variant", "payment") and not sf.get(asked) and not sf.get("switched_from_uvdtf"):
+        _take(sf, asked, text, loose=True)
 
     # A customer who says "rehne do" gets a soft close, not another question. The funnel
     # stops asking; they can still ask whatever they like and the team can pick it up.
@@ -400,10 +513,25 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
 
     slot = next_slot(sf, cfg)
 
+    # Nothing in this message answered the question we asked — but people reply out of
+    # order all the time ("Delhi" while we are still asking for artwork, "500" while we
+    # are asking for a design). Offer it to the other open slots before giving up on it;
+    # re-asking something the customer already told us is what gives a bot away.
+    if slot and asked and not filled_any and not pushing:
+        for cand in SLOTS:
+            if cand == asked or sf.get(cand) or _skip(cand, cfg):
+                continue
+            _take(sf, cand, text)
+            if sf.get(cand):
+                filled_any = True
+                break
+        if filled_any:
+            slot = next_slot(sf, cfg) or slot
+
     if slot is None or (pushing and sf["price_asks"] >= f.price_after_asks):
         sf["quoted"] = True
         sf["asked"] = None
-        reply = quote(sf, cfg)
+        reply = quote(sf, cfg, final=slot is None)
         if slot is not None:
             reply += "\n\n" + question(slot, sf, cfg)
             sf["asked"] = slot
@@ -411,9 +539,14 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
 
     sf["asked"] = slot
     lines = []
+    if sf.pop("switched_from_uvdtf", None):
+        lines.append(f.fabric_redirect.strip())
     for s in SLOTS:
         if sf.get(s) and not before.get(s):
-            said = ack(s, sf.get(s), len(text or ""))
+            # "Mug par? Haan, us par achha aata hai" — not "Smooth hard surface (glass,
+            # ceramic, steel, acrylic) par?". Read their own word back to them.
+            value = _short_item(sf) if s == "variant" else sf.get(s)
+            said = ack(s, value, len(text or ""))
             if said:
                 lines.append(said)
             break

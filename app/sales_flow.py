@@ -55,6 +55,7 @@ SERVICES: list[tuple[str, str, set[str]]] = [
      {"exhibition", "stall", "event", "events", "canopy", "standee", "awning", "booth"}),
 ]
 _SERVICE_LABEL = {k: label for k, label, _ in SERVICES}
+_SERVICE_WORDS = {w for _k, _l, keys in SERVICES for w in keys}
 
 # The fork inside each lane. Catching this early is what stops a fabric job being
 # quoted at sticker rates.
@@ -133,6 +134,17 @@ _SOCIAL_WORDS = {
 _BACKING_OFF = ("chhodo", "chodo", "rehne do", "rahne do", "nahi chahiye", "nhi chahiye",
                 "baad mein", "abhi nahi", "sochta hoon", "sochti hoon", "soch kar", "dekhte hain")
 _NO_DESIGN = {"nahi", "nhi", "no", "nahin", "banado", "banwana", "banwane", "banaoge", "aap", "tum"}
+# "photo abhi nahi hai" is about the product photo, not the artwork. Reading its "nahi"
+# as "design nahi hai" told a customer who had a logo that the team would make one.
+_PHOTO_WORDS = {"photo", "pic", "picture", "image", "tasveer", "foto"}
+# "design hai mere paas", "logo ready hai" — they have artwork and will send it.
+_HAS_DESIGN_WORDS = {"hai", "ready", "haan", "ha", "yes", "bhejta", "bhejti", "bhej", "bhejunga", "paas", "mere"}
+_NEGATIONS = {"nahi", "nhi", "nahin", "no", "nai"}
+# Never an address: a refusal, a remark about the photo or design, a bare yes/no. Found
+# live — "nahi photo nahi" was saved as the delivery address, the address question was
+# then skipped, and the real address that came two messages later was thrown away.
+_NOT_AN_ADDRESS = (_NEGATIONS | _PHOTO_WORDS | {"design", "logo", "file", "abhi", "baad", "haan", "ha",
+                    "yes", "ok", "okay", "theek", "thik", "pata", "malum", "hai", "h"})
 _NOT_A_NAME = {"hi", "hello", "hey", "namaste", "yes", "haan", "ok", "okay", "sticker", "price"}
 # Every word that names something we sell or something it goes on. Anything containing
 # one of these is an answer about the job, never a person's name.
@@ -174,6 +186,7 @@ _PAGES_RE = re.compile(r"\b(\d{1,4})\s*(?:sheet|sheets|page|pages)?\b", re.I)
 # A 10-digit Indian mobile, with or without a leading +91 / 91 / 0.
 _PHONE_RE = re.compile(r"(?:\+?91[\s-]?|0)?\b([6-9]\d{9})\b")
 _SAME_NUMBER_WORDS = {"yahi", "yehi", "isi", "same", "yahin"}
+_MEDIA_KINDS = ("image", "sticker", "document", "video")
 
 
 def _words(text: str) -> set[str]:
@@ -207,8 +220,20 @@ def save(state: dict, sf: dict) -> None:
     state["sf"] = sf
 
 
-def _match(words: set[str], table) -> tuple[str, str] | None:
+# "steel ki bottle", "glass jar", "wooden box": the material comes first and the object
+# second, and it is the object that decides how a UV DTF print goes on. So when a reply
+# names both, the shape buckets win over the material one. Matching order only — the
+# options are still shown to the customer in the order the table lists them.
+_MATCH_ORDER = {
+    "uvdtf": ("curved item", "wood ya leather", "packaging", "cloth / fabric", "smooth hard surface"),
+}
+
+
+def _match(words: set[str], table, service: str | None = None) -> tuple[str, str] | None:
     """Returns (bucket label, the word the customer actually used)."""
+    order = _MATCH_ORDER.get(service or "")
+    if order:
+        table = sorted(table, key=lambda row: next((i for i, p in enumerate(order) if row[0].startswith(p)), len(order)))
     for label, keys in table:
         hit = words & keys
         if hit:
@@ -238,7 +263,7 @@ def _take(sf: dict, slot: str, text: str, loose: bool = False) -> None:
         # A payment word, an item or a bare number is a late answer to another question,
         # not a city. "City: cash" on the team's alert is exactly the kind of thing that
         # makes the whole chat look automated.
-        if words & (_PAYMENT_WORDS | _PRODUCT_WORDS | _NOT_A_NAME):
+        if words & (_PAYMENT_WORDS | _PRODUCT_WORDS | _NOT_A_NAME | _NOT_AN_ADDRESS):
             return
         if re.fullmatch(r"[\d\s,.\u2013-]+", cleaned):
             return
@@ -253,6 +278,11 @@ def _take(sf: dict, slot: str, text: str, loose: bool = False) -> None:
         return
 
     if slot == "variant" and loose:
+        # Something outside the list ("phone cover") is a fine answer. Repeating the
+        # service ("uv dtf") or saying no is not — taking it made the team's alert read
+        # "Item: uv dtf" and skipped the question that would have found the real item.
+        if words & (_SERVICE_WORDS | _NEGATIONS | _PHOTO_WORDS) or _is_social(cleaned):
+            return
         sf["variant"] = cleaned
 
 
@@ -263,7 +293,11 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
 
     if kind in ("image", "sticker"):
         # A picture before any artwork talk is the product; after that it is the design.
-        sf["design" if sf.get("photo") else "photo"] = True
+        # UV DTF never asks for a product photo, and a picture sent while we are asking
+        # for artwork is the artwork — either way it is the design.
+        product_photo_open = (not sf.get("photo") and sf.get("service") != "uvdtf" and asked != "design"
+                              and "photo" not in (sf.get("skipped") or []))
+        sf["photo" if product_photo_open else "design"] = True
     elif kind in ("document", "video"):
         sf["design"] = True
 
@@ -276,7 +310,7 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
     if sf.get("service") and not sf.get("variant"):
         table = VARIANTS.get(sf["service"])
         if table:
-            found = _match(words, table[1])
+            found = _match(words, table[1], sf["service"])
             label = found[0] if found else None
             if label == "cloth / fabric":
                 # Not a UV DTF job at all — move them to the lane that can actually do it
@@ -329,8 +363,19 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
     # "design nahi hai, aap bana do" is a real answer whenever it is said — people
     # volunteer it while we are still asking for the product photo, and ignoring it
     # there left the bot asking for artwork over and over.
-    if not sf.get("design") and words & _NO_DESIGN and (asked == "design" or "design" in words or "logo" in words):
+    talks_design = bool(words & {"design", "logo", "artwork"})
+    about_photo_only = bool(words & _PHOTO_WORDS) and not talks_design
+    if (not sf.get("design") and not about_photo_only and words & _NO_DESIGN
+            and (asked == "design" or talks_design)):
         sf["design"] = "team"
+    # "design hai mere paas", "haan logo ready hai" — they have artwork and will send it.
+    # Recorded so the funnel moves on instead of asking again; the file itself replaces
+    # this the moment it arrives.
+    elif (not sf.get("design") and not (words & _NEGATIONS)
+          and kind not in ("image", "sticker", "document", "video")
+          and ((talks_design and words & _HAS_DESIGN_WORDS)
+               or (asked == "design" and words & {"haan", "ha", "yes", "ready", "h"}))):
+        sf["design"] = "customer"
 
     # A name only counts when we actually asked for one, and even then it must not look
     # like an answer to some other question — "mug par" is an item, not a person, and
@@ -359,6 +404,11 @@ def _skip(slot: str, cfg: BotConfig, sf: dict | None = None) -> bool:
     if slot == "design" and not f.want_design:
         return True
     if slot == "name" and not f.want_name:
+        return True
+    # The UV DTF script goes item -> "design ready hai? bhej do" -> size. A photo of the
+    # bottle it goes on was never part of it, and in the live playground two customers
+    # out of two refused it straight away — friction with nothing to show for it.
+    if slot == "photo" and (sf or {}).get("service") == "uvdtf":
         return True
     # "No. of sheets" only means something for UV DTF, which is priced per sheet. Every
     # other lane is quoted by the team, so the question has no answer worth having there.
@@ -392,6 +442,10 @@ _RETRY: dict[str, str] = {
     "photo": "Us item ki ek photo mil jaye to size pakka bata dungi 📷",
     "design": "Design ya logo bhej dijiyega, phir layout bana ke dikha deti hoon.",
     "size": "Size ka andaaza bhi chalega — kitne inch ka chahiye?",
+    "variant": "Bas item ka naam likh dijiye — jaise bottle, glass, box ya diary. Kis cheez par lagana hai?",
+    # UV DTF only prints on two sheet sizes; asking it "kitne inch" was asking a question
+    # with no right answer.
+    "size_uvdtf": "Bas ye bata dijiye — A4 sheet chahiye ya A3?",
     "qty": "Approx kitne piece? Bas moti si ginti bata dijiye.",
     "pages": "Kitne sheet chahiye, bas andaza bata dijiye.",
     "city": "Delivery address bata dijiye, courier usi par bhej denge.",
@@ -404,6 +458,12 @@ _RETRY: dict[str, str] = {
 def question(slot: str, sf: dict, cfg: BotConfig) -> str:
     f = cfg.sales_flow
     if (sf.get("tries") or {}).get(slot) and slot in _RETRY:
+        if slot == "size" and sf.get("service") == "uvdtf":
+            return _RETRY["size_uvdtf"]
+        if slot == "variant" and sf.get("service") != "uvdtf":
+            table = VARIANTS.get(sf.get("service") or "")
+            if table:
+                return "Inme se kaunsa? Bas naam likh dijiye \U0001f447\n" + "\n".join("• " + label for label, _ in table[1])
         return _RETRY[slot]
     if slot == "service":
         return f.ask_service.replace("{services}", service_menu())
@@ -433,15 +493,19 @@ _ACK: dict[str, tuple[str, ...]] = {
     "photo": ("Photo mil gayi, dekh li 👍", "Mil gayi photo.", "Haan, dikh gayi 👍"),
     "design": ("Design mil gaya, shukriya 🙏", "Mil gaya design, dekh liya 👍", "Aa gaya, dekh liya maine 👍"),
     "design_team": ("Koi baat nahi, hamari team bana degi 👍", "Theek hai, design hum bana denge.", "Arre koi dikkat nahi, bana denge hum."),
+    "design_customer": ("Badhiya! Jab ho sake yahin bhej dijiyega 👍", "Achha hai, design ready hai to kaam fast hoga — yahin bhej dijiye.", "Perfect, bas yahin bhej dijiyega jab free ho 👍"),
     "size": ("{v} — note kar liya.", "Theek hai, {v}.", "{v}, likh liya."),
     "qty": ("{v} — samajh gayi.", "{v}, theek hai.", "Achha, {v}."),
-    "city": ("{v} se hain, achha 👍", "Theek hai, {v}.", "{v} — note kiya."),
+    # It is a full delivery address now, not a city — "Shop 12, MI Road se hain" read
+    # like the bot had not understood what it was given.
+    "city": ("Address note kar liya 👍", "Theek hai, isi address par bhejenge.", "Achha, address likh liya."),
+    "phone": ("Number note kar liya 👍", "Theek hai, isi number par contact karenge.", "Achha, number likh liya."),
     "payment": ("Theek hai ji 👍", "Samajh gayi.", "Note kar liya 👍"),
 }
 
 
 def ack(slot: str, value, seed: int) -> str:
-    key = "design_team" if slot == "design" and value == "team" else slot
+    key = {"team": "design_team", "customer": "design_customer"}.get(value, slot) if slot == "design" else slot
     options = _ACK.get(key)
     if not options:
         return ""
@@ -456,7 +520,13 @@ def ack(slot: str, value, seed: int) -> str:
 
 
 def _short_item(sf: dict) -> str:
-    bucket = re.sub(r"\s*\([^)]*\)", "", sf.get("variant") or "").strip()
+    label = sf.get("variant") or ""
+    # A plain label ("t-shirt", "cap") is already what they said, and better spelled —
+    # "t-shirt" splits into "t" and "shirt", and reading back "Shirt" sounds off. Their
+    # own word only beats a long descriptive bucket like "curved item (bottle, ...)".
+    if "(" not in label:
+        return label
+    bucket = re.sub(r"\s*\([^)]*\)", "", label).strip()
     return sf.get("item_said") or bucket
 
 
@@ -485,7 +555,7 @@ def summary(sf: dict) -> str:
         ("Address", sf.get("city")),
         ("Contact", sf.get("phone")),
         ("Payment", sf.get("payment")),
-        ("Design", {"team": "team banayegi", True: "mil gaya"}.get(sf.get("design"))),
+        ("Design", {"team": "team banayegi", "customer": "customer ke paas hai, bhejenge", True: "mil gaya"}.get(sf.get("design"))),
     ]
     return "\n".join(f"• {k}: {v}" for k, v in rows if v)
 
@@ -549,6 +619,10 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         # or "ok" still gets a human reply instead of silence.
         if _is_social(text):
             return f.social_reply.strip(), False
+        # The design they promised arriving after the quote is the most normal thing in
+        # the world. Without this it fell through to "samajh nahi aaya".
+        if kind in _MEDIA_KINDS:
+            return f.media_received.strip(), False
         return None, False
 
     # Once someone has stepped back, stay stepped back. next_slot() returns None while
@@ -557,6 +631,8 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     if sf.get("paused"):
         if _is_social(text):
             return f.social_reply.strip(), False
+        if kind in _MEDIA_KINDS:
+            return f.media_received.strip(), False
         return None, False
 
     # A free-text answer to the question we actually asked — take it at face value
@@ -566,8 +642,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
 
     # A customer who says "rehne do" gets a soft close, not another question. The funnel
     # stops asking; they can still ask whatever they like and the team can pick it up.
-    low = " " + " ".join(_words(text)) + " "
-    if not sf.get("quoted") and any(p in low.replace("  ", " ") for p in _BACKING_OFF):
+    # In the order they were typed. This used to join _words(), which is a set — its
+    # order changes with every process start, so "abhi nahi" matched on one server run
+    # and not the next. Found live: the same "abhi nahi, sochta hoon" got a soft close
+    # once and was ignored after a restart.
+    low = " " + " ".join(_WORD_RE.findall((text or "").lower())) + " "
+    # "photo abhi nahi hai" is about the photo, not about the order — reading it as
+    # "abhi nahi (chahiye)" handed a willing customer a goodbye.
+    about_a_file = bool(_words(text) & (_PHOTO_WORDS | {"design", "logo", "file", "artwork"}))
+    if not sf.get("quoted") and not about_a_file and any(f" {p} " in low for p in _BACKING_OFF):
         sf["paused"] = True
         sf["asked"] = None
         # Backing off is the moment a person would save the sale, not the moment to
@@ -584,7 +667,9 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     # comply loses the lead, so give the question up and carry on. A message that filled
     # some other slot is not a refusal though — sending the product photo while we asked
     # for artwork is progress, and must not cost them the artwork question.
-    filled_any = any(sf.get(s) and not before.get(s) for s in SLOTS)
+    filled_any = (any(sf.get(s) and not before.get(s) for s in SLOTS)
+                  # The promised design file arriving is progress too, not a non-answer.
+                  or (before.get("design") == "customer" and sf.get("design") is True))
     if asked and not sf.get(asked) and not pushing:
         tries = dict(sf.get("tries") or {})
         tries[asked] = tries.get(asked, 0) + 1
@@ -618,6 +703,10 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         sf["quoted"] = True
         sf["asked"] = None
         reply = quote(sf, cfg, final=slot is None)
+        # "bahut mehnga hai" that tips us into giving the rate is still a complaint;
+        # answering it with a bare rate card skipped the one line a person would say.
+        if pushing and _words(text) & _OBJECTION_WORDS:
+            reply = f.objection_text.strip() + "\n\n" + reply
         if slot is not None:
             reply += "\n\n" + question(slot, sf, cfg)
             sf["asked"] = slot
@@ -627,8 +716,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     lines = []
     if sf.pop("switched_from_uvdtf", None):
         lines.append(f.fabric_redirect.strip())
+    if slot == "name":
+        # First contact: say who we are and ask their name, in one breath. Acking the
+        # service and saying "rate abhi batati hoon" first stacked three paragraphs
+        # before even a namaste — the reply read like a bot emptying its pockets.
+        lines.append((f.ask_name_price if pushing else question("name", sf, cfg)).strip())
+        return "\n\n".join(lines), False
     for s in SLOTS:
-        if sf.get(s) and not before.get(s):
+        upgraded = s == "design" and before.get(s) == "customer" and sf.get(s) is True
+        if (sf.get(s) and not before.get(s)) or upgraded:
             # "Mug par? Haan, us par achha aata hai" — not "Smooth hard surface (glass,
             # ceramic, steel, acrylic) par?". Read their own word back to them.
             value = _short_item(sf) if s == "variant" else sf.get(s)
@@ -645,6 +741,12 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             is_a3 = (sf.get("size") or "").strip().upper() == "A3"
             if int(n.group()) < (5 if is_a3 else 10):
                 lines.append((f.bulk_upsell_a3 if is_a3 else f.bulk_upsell).strip())
+    # A plain "no" to something ("photo abhi nahi hai", "nahi photo nahi") that filled
+    # nothing used to get silence and the next question — a person says "koi baat nahi"
+    # first. Said about the design, it also covers both things they might have meant.
+    if (asked and not filled_any and not pushing and not lines
+            and _words(text) & _NEGATIONS and not sf.get(asked)):
+        lines.append(f.no_problem_design.strip() if asked == "design" else "Koi baat nahi 👍")
     # Said once, not on every message — a customer who keeps saying "jaldi" does not
     # want to hear the same reassurance back each time.
     if not sf.get("quoted") and not sf.get("urgency_acked") and (_words(text) & _URGENCY_WORDS):

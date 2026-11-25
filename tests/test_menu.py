@@ -154,7 +154,7 @@ async def test_handoff_and_followup(api, menu_tenant, db, graph):
     assert "Sanganeri Floral" in follow["interactive"]["body"]["text"] and button_ids(follow)[0] == "buy:p2"
 
     await say(api, "product toota hua aaya hai")
-    assert "team jaldi" in last(graph)["text"]["body"] and "10am-7pm" in last(graph)["text"]["body"]
+    assert "jaldi aapse baat" in last(graph)["text"]["body"] and "10am-7pm" in last(graph)["text"]["body"]
     conv = await db.scalar(select(Conversation).join(Contact).where(Contact.wa_id == CUSTOMER))
     assert conv.mode == "human"
 

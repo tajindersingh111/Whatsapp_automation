@@ -125,10 +125,19 @@ class SalesFlowConfig(BaseModel):
     # {prompt} and {options} come from the chosen service's fork.
     ask_variant: str = "{prompt}\n{options}"
     ask_name: str = "Namaste 🙏 Main Simran, HS Company se. Aapka naam jaan lun?"
+    # First message already asks the rate (most ad clicks do). Promise it, then the name.
+    ask_name_price: str = "Namaste 🙏 Main Simran, HS Company se. Rate zaroor bataungi — bas pehle aapka naam jaan lun?"
+    # "photo/design abhi nahi hai" while we asked for the design — fine either way.
+    no_problem_design: str = "Koi baat nahi 👍 Jab ho sake bhej dijiyega, warna hamari team bana degi."
+    # A photo/file arriving after the quote or a soft close.
+    media_received: str = "Mil gaya 👍 Team ko forward kar diya hai, wo isi ke hisaab se aage kaam karegi."
     ask_item: str = "Bahut badhiya 👍 Pehle ye bata dijiye — print lagana kis cheez par hai?"
     ask_photo: str = "Us cheez ki ek photo bhej dijiye na 📷 Dekh kar main sahi size bata paungi, warna andaaza hi rahega."
-    ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi rehti hai, high-resolution PNG bhi chal jaayega. Design nahi hai to bhi koi baat nahi — bata dijiye, hamari team bana deti hai."
-    ask_size: str = "{name} ji, print kitne size ka chahiye? Jaise 2 inch, 3x3 inch, ya A4 — size se hi rate banta hai."
+    # The sales script's own question ("kya aapke paas design ready hai? design bhej do")
+    # and its own format rule (CDR/PNG only).
+    ask_design: str = "Kya aapke paas design ready hai? Ho to yahin bhej dijiye — CDR ya PNG format mein. Nahi hai to koi baat nahi, hamari team bana degi 👍"
+    # Generic lanes (signage, fabric, mug) — examples that fit a board and a t-shirt alike.
+    ask_size: str = "{name} ji, kitne size ka chahiye? Jaise 4 inch, 12x18 inch ya 3x2 feet — size se hi rate banta hai."
     # UV DTF only prints in two page sizes, so the question is a choice, not an open one.
     ask_size_uvdtf: str = "Page size A4 chahiye ya A3? Hamare yaha inhi do size mein print hota hai, price bhi isi ke hisaab se hota hai."
     ask_qty: str = "Aur kitne piece ka soch rahe hain? Approx bhi chalega."

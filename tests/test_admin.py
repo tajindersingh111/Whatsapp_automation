@@ -198,7 +198,7 @@ async def test_inbox_views_separate_real_conversations(api, tenant, db, graph, f
     assert waiting[0]["waiting"] is True and waiting[0]["replied"] is True and waiting[0]["preview"] == "koi hai?"
 
     summary = (await api.get(f"/admin/tenants/{tenant.id}/conversations/summary", headers=ADMIN)).json()
-    assert summary == {"all": 3, "waiting": 1, "chatting": 2, "human": 1, "no_reply": 1}
+    assert summary == {"all": 3, "waiting": 1, "chatting": 2, "human": 1, "no_reply": 1, "hot": 0}
     assert (await view("human")).json()[0]["mode"] == "human"
     assert phones(await api.get(f"/admin/tenants/{tenant.id}/conversations?view=all&q=Silent", headers=ADMIN)) == {"919861000003"}
     assert (await view("nonsense")).status_code == 422

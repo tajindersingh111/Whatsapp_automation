@@ -85,7 +85,8 @@ class SalesFlowConfig(BaseModel):
     price_text: str = (
         "Rate ye rahe 👇\n"
         "*A4 sheet* — 1 se 5 sheet Rs 200/sheet, 10+ sheet Rs 180/sheet\n"
-        "*A3 sheet* — 1 se 5 sheet Rs 300/sheet, 5+ sheet Rs 280/sheet\n\n"
+        "*A3 sheet* — 1 se 5 sheet Rs 300/sheet, 5+ sheet Rs 280/sheet\n"
+        "Minimum order 5 sheet ka hai.\n\n"
         "Aapke design ke size se ek sheet par kitne stickers aayenge, team layout bana kar exact bata degi — "
         "usi hisaab se final rate.\n\n"
         "Payment 100% advance hota hai, +18% GST aur shipping charges extra lagte hain."
@@ -112,6 +113,11 @@ class SalesFlowConfig(BaseModel):
     bulk_text: str = "{pages} sheet par aapko bulk rate milega — Rs {rate}/sheet{piece} 👍"
     # A plain price question after the rate card already went out.
     price_again: str = "Rate maine upar bhej diya hai 👆 Koi confusion ho to team call par sab samjha degi."
+    # "Minimum order — 5 sheet." Below it, say so and work it out at the minimum.
+    min_sheets: int = 5
+    min_order_text: str = "Minimum order {min} sheet ka hota hai 👍"
+    # Added when we know how many fit: {min}, {sheet} A4/A3, {pieces} total at the minimum.
+    min_order_pieces: str = "{min} {sheet} sheet mein aapke lagbhag {pieces} piece ban jayenge."
     # Sheets worked out from quantity and design size, instead of asking.
     pages_auto_text: str = "{qty} piece ke liye lagbhag {pages} {sheet} sheet lagengi 👍"
     # Said right after a low sheet count, before the customer has to ask for a better
@@ -132,44 +138,46 @@ class SalesFlowConfig(BaseModel):
     # Shown when the customer has not picked a lane yet. {services} is filled from the
     # catalogue in app/sales_flow.py, so the menu never drifts from what is actually sold.
     ask_service: str = (
-        "Hamare yaha sabhi tarah ka signage aur printing ka kaam hota hai, bulk order mein \U0001f44d\n\n"
-        "Ye sab banate hain:\n{services}\n\n"
-        "Aapko inme se kya chahiye?"
+        "Hamare yaha sabhi tarah ka signage aur printing ka kaam hota hai — sirf bulk order \U0001f44d\n\n"
+        "Hum ye sab banate hain:\n{services}\n\n"
+        "Aapko inme se kya service chahiye?"
     )
     # The same company intro, shown when the customer named the service before we could
     # ask (most ad clicks: "UV DTF ka rate kya hai?"). The sales script always opens with
     # it, and skipping it meant they never heard what else HS does.
     company_intro: str = (
-        "Hamare yaha sabhi tarah ka signage aur printing ka kaam hota hai, bulk order mein \U0001f44d\n\n"
-        "Ye sab banate hain:\n{services}"
+        "Hamare yaha sabhi tarah ka signage aur printing ka kaam hota hai — sirf bulk order \U0001f44d\n\n"
+        "Hum ye sab banate hain:\n{services}"
     )
     # Follows company_intro, so the service they already asked for is not asked again.
     service_known: str = "Aapne {service} ke baare mein poocha tha — ye hamara sabse demand wala kaam hai \U0001f44d"
     # {prompt} and {options} come from the chosen service's fork.
     ask_variant: str = "{prompt}\n{options}"
-    ask_name: str = "Namaste 🙏 Main Simran, HS Company se. Aapka naam jaan lun?"
+    # The script: "Simer -> Name: Aapka naam jaan sakti hoon?"
+    ask_name: str = "Namaste 🙏 Main Simer, HS Company se. Aapka naam jaan sakti hoon?"
     # First message already asks the rate (most ad clicks do). Promise it, then the name.
-    ask_name_price: str = "Namaste 🙏 Main Simran, HS Company se. Rate zaroor bataungi — bas pehle aapka naam jaan lun?"
+    ask_name_price: str = "Namaste 🙏 Main Simer, HS Company se. Rate zaroor bataungi — pehle aapka naam jaan sakti hoon?"
     # When nothing matched. The menu bot's version says "neeche se chuniye ... jaise
     # 'blue bedsheet'" — buttons that are gone, for a shop that does not sell bedsheets.
     not_understood: str = "Ye main theek se samajh nahi paayi 🙏 Thoda aur bata dijiye — ya team se baat karni ho to 'team se baat' likh dijiye."
     # "photo/design abhi nahi hai" while we asked for the design — fine either way.
-    no_problem_design: str = "Koi baat nahi 👍 Jab ho sake bhej dijiyega, warna hamari team bana degi."
+    no_problem_design: str = "Koi baat nahi 👍 Jab ho sake bhej dijiyega — warna hamare catalogue se design select kar sakte hain."
     # A photo/file arriving after the quote or a soft close.
     media_received: str = "Mil gaya 👍 Team ko forward kar diya hai, wo isi ke hisaab se aage kaam karegi."
     ask_item: str = "Bahut badhiya 👍 Pehle ye bata dijiye — print lagana kis cheez par hai?"
     ask_photo: str = "Us cheez ki ek photo bhej dijiye na 📷 Dekh kar main sahi size bata paungi, warna andaaza hi rahega."
-    # The sales script's own question ("kya aapke paas design ready hai? design bhej do")
-    # and its own format rule (CDR/PNG only).
-    ask_design: str = "Kya aapke paas design ready hai? Ho to yahin bhej dijiye — CDR ya PNG format mein. Nahi hai to koi baat nahi, hamari team bana degi 👍"
+    # The script: "Kya aapke paas design ready hai? -> Design bhej do (PDF/PNG format
+    # only). Nahi hai -> yahan se catalogue mein select karna hai, SS bhejwa denge."
+    ask_design: str = "Theek hai 👍 Kya aapke paas design ready hai? Ho to yahin bhej dijiye (PDF ya PNG format mein). Nahi hai to hamare catalogue se select kar sakte hain — main screenshots bhejwa deti hoon."
     # Generic lanes (signage, fabric, mug) — examples that fit a board and a t-shirt alike.
     ask_size: str = "{name} ji, kitne size ka chahiye? Jaise 4 inch, 12x18 inch ya 3x2 feet — size se hi rate banta hai."
     # UV DTF only prints in two page sizes, so the question is a choice, not an open one.
-    ask_size_uvdtf: str = "Page size A4 chahiye ya A3? Hamare yaha inhi do size mein print hota hai, price bhi isi ke hisaab se hota hai."
-    ask_qty: str = "Aur kitne piece ka soch rahe hain? Approx bhi chalega."
+    ask_size_uvdtf: str = "Bahut achhe! Aapko kis size mein print karwana hai? Hamare yaha A4 aur A3 size mein print hote hain."
+    ask_qty: str = "Kitne piece chahiye? Quantity likh dijiye — bulk order mein rate aur kam ho jaata hai 👍"
     # Only asked for UV DTF — the rate card is per sheet, not per piece.
-    ask_pages: str = "Kitne sheet (page) print karwane hain? Jaise 5 sheet, 10 sheet."
-    ask_city: str = "Delivery ka full address bata dijiye (house/shop no, area, city) — courier isi par bhejenge."
+    ask_pages: str = "Kitni sheet print karwani hain? Minimum order 5 sheet ka hai — 10+ sheet par rate aur kam ho jaata hai."
+    # The script asks for all three in one go to confirm the order.
+    ask_city: str = "Order confirm karne ke liye apna poora naam, full address (city ke saath) aur mobile number bhej dijiye 👍"
     ask_phone: str = "Aur ek contact number bata dijiye delivery ke liye — isi WhatsApp number par bhejna ho to 'yahi' likh dijiye."
     # Asked, not stated — the terms are the team's to set, the bot only learns the
     # customer's preference so the team is not starting from zero on the call.
@@ -184,9 +192,9 @@ class SalesFlowConfig(BaseModel):
     # UV DTF does not bond to fabric. Saying so plainly, and moving them to the lane
     # that can do it, keeps the lead instead of quoting the wrong process.
     fabric_redirect: str = (
-        "Ek baat bata doon ji — UV DTF sticker cloth par nahi chipakta, wo plain ya hard surface ke liye hai. "
-        "Cloth/T-shirt ke liye hamari alag DTF machine hai, usmein design heat press se paste hota hai aur "
-        "wash mein bhi nahi nikalta. Usi hisaab se aage badhte hain 👍"
+        "Ek baat bata doon ji — UV DTF sticker cloth par nahi lagta, wo plain ya hard surface ke liye hai. "
+        "Kapde ke liye hamara DTF print hota hai — usme design aapko heat press se paste karna hoga, "
+        "aur wash mein bhi nahi nikalta 👍"
     )
     # Said when the customer calls it expensive, which is an objection, not a question.
     objection_text: str = (
@@ -194,7 +202,8 @@ class SalesFlowConfig(BaseModel):
         "aur ek sheet par aapke design ke size ke hisaab se kai piece nikal jaate hain, "
         "to per piece kaafi sasta pad jaata hai."
     )
-    ask_payment: str = "Aur payment aap kaise karna pasand karenge — UPI, bank transfer, ya cash? Team isi hisaab se detail bhej degi."
+    # Prepaid only — offering cash contradicted the 100% advance rule.
+    ask_payment: str = "Payment 100% advance hota hai — UPI se karenge ya bank transfer se? Team usi hisaab se detail bhej degi."
 
     # Everything except UV DTF is priced by the team, so the bot never invents a number
     # for a job that has no published rate.

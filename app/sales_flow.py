@@ -32,30 +32,49 @@ from app.bot_config import BotConfig
 
 SLOTS = ("name", "service", "variant", "photo", "design", "size", "qty", "pages", "city", "phone", "payment")
 
-# The lanes the factory sells. First match wins, and UV DTF goes first on purpose:
-# "DTF" alone means garment printing, but "UV DTF" means stickers, and stickers are the
-# product the ads run on. Checking fabric first sent every "uv dtf" enquiry down the
-# garment lane and withheld the sticker rate card.
+# The lanes the factory sells — the list from the handwritten sales script, in its
+# order, with what it crossed out left out (non-lit board, a separate wooden-door line,
+# corporate). Shown to the customer in this order.
 SERVICES: list[tuple[str, str, set[str]]] = [
-    ("uvdtf", "UV DTF stickers",
-     {"uvdtf", "sticker", "stickers", "uv", "transfer", "label", "labels", "stickering"}),
-    ("fabric", "T-shirt / fabric printing",
+    ("display", "Digital Display Signage", {"digital", "display", "lcd", "screen"}),
+    ("led", "LED Board / Neon Sign", {"led", "neon"}),
+    ("glow", "Glow Sign Board", {"glow", "glowsign", "backlit", "signboard", "sign", "signage", "board", "acp", "channel"}),
+    ("inshop", "Inshop Branding — Sunboard, Vinyl, One Way", {"inshop", "instore", "sunboard", "vinyl", "oneway", "window"}),
+    ("uvprint", "UV Printing", {"flatbed"}),
+    ("uvdtf", "UV DTF Sticker",
+     {"uvdtf", "sticker", "stickers", "transfer", "label", "labels", "stickering",
+      # The things it goes on — "bottle par logo chahiye" is a UV DTF enquiry.
+      "mug", "mugs", "bottle", "bottles", "tumbler", "sipper", "jar", "jars"}),
+    ("fabric", "DTF Printing — T-shirt & Fabric",
      {"tshirt", "tshirts", "shirt", "kapda", "kapde", "kapra", "cloth", "clothes", "fabric",
       "cotton", "jersey", "hoodie", "banyan", "towel", "cap", "apron", "dtf"}),
-    ("mug", "Mug printing",
-     {"mug", "mugs", "cup", "cups", "sublimation"}),
-    ("signage", "LED / neon / backlit signage",
-     {"signage", "sign", "board", "led", "neon", "backlit", "glow", "channel", "acp", "flex",
-      "banner", "hoarding"}),
-    ("print", "Vinyl / wallpaper / canvas printing",
-     {"vinyl", "wallpaper", "canvas", "oneway", "poster", "printing", "print"}),
-    ("cnc", "CNC / laser cutting, wooden doors",
-     {"cnc", "laser", "jali", "cutting", "door", "doors", "mdf", "engraving"}),
-    ("events", "Exhibition stall / event branding",
-     {"exhibition", "stall", "event", "events", "canopy", "standee", "awning", "booth"}),
+    ("cnc", "CNC / Laser Cutting — Wooden Doors", {"cnc", "laser", "jali", "cutting", "door", "doors", "mdf", "engraving"}),
+    ("events", "Exhibition Stall / Event Branding", {"exhibition", "stall", "event", "events", "canopy", "standee", "booth", "expo", "backdrop"}),
+    ("canvas", "Canvas Printing", {"canvas", "painting"}),
+    ("flex", "Flex Printing", {"flex", "banner", "hoarding"}),
 ]
 _SERVICE_LABEL = {k: label for k, label, _ in SERVICES}
-_SERVICE_WORDS = {w for _k, _l, keys in SERVICES for w in keys}
+_SERVICE_WORDS = {w for _k, _l, keys in SERVICES for w in keys} | {"uv"}
+_SERVICE_KEYS = {k: keys for k, _l, keys in SERVICES}
+# Matching order is not display order. UV DTF goes first on purpose: it is the product
+# the ads run on, and "dtf sticker" must not land in the garment lane. Specific lanes
+# before the catch-all signboard one, so "LED board" is LED, not glow sign.
+_SERVICE_MATCH_ORDER = ("uvdtf", "fabric", "led", "display", "inshop", "uvprint", "cnc",
+                        "events", "canvas", "flex", "glow")
+
+
+def _service_of(words: set[str]) -> str | None:
+    # "UV" alone is ambiguous between UV printing (direct, flatbed) and UV DTF stickers.
+    if "uv" in words:
+        if words & {"dtf", "sticker", "stickers", "label", "labels", "transfer"}:
+            return "uvdtf"
+        if words & {"print", "printing", "printer", "flatbed"}:
+            return "uvprint"
+        return "uvdtf"  # the main product; the variant question sorts out the rest
+    for key in _SERVICE_MATCH_ORDER:
+        if words & _SERVICE_KEYS[key]:
+            return key
+    return None
 
 # The fork inside each lane. Catching this early is what stops a fabric job being
 # quoted at sticker rates.
@@ -64,46 +83,39 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
     # the same job, and a cotton bag is a different process entirely. Asking by surface
     # is how the factory actually decides, and it catches the fabric mistake up front.
     # Item words stay in the keywords so "mug" still lands in the right bucket.
-    "uvdtf": ("UV DTF sticker aajkal bahut trending hai — plain ya hard surface par sabse achha baithta hai. Aapka item kaunsa hai?", [
-        ("smooth hard surface (glass, ceramic, steel, acrylic)",
-         {"glass", "kaanch", "kanch", "ceramic", "mug", "mugs", "cup", "cups", "steel", "metal",
-          "acrylic", "aluminium", "mirror", "tile", "plate", "trophy", "laptop", "helmet", "mobile"}),
-        ("curved item (bottle, sipper, jar, tumbler)",
-         {"bottle", "bottles", "sipper", "tumbler", "flask", "jar", "jars", "container", "pen", "dabba"}),
-        ("packaging (kraft box, carton, pouch)",
-         {"packaging", "box", "boxes", "carton", "kraft", "pouch", "packet", "packing", "chocolate"}),
-        ("wood ya leather (diary, wooden box, wallet)",
-         {"wood", "wooden", "mdf", "ply", "leather", "diary", "notebook", "planner", "frame"}),
+    # The script: "UV DTF sticker bahut trending hai aajkal — plain ya hard surface par
+    # sabse achha hota hai. Aapko kispe paste karna hai?" with curved items (tumbler) and
+    # cloth as the two things to tell apart. Box, diary, glass and the like are all plain
+    # hard surfaces as far as printing goes, so their words live in that bucket.
+    "uvdtf": ("UV DTF sticker aajkal bahut trending hai \U0001f44d Ye plain ya hard surface par sabse achha hota hai.\n\nAapko kispe paste karna hai?", [
+        ("plain / hard surface (glass, steel, acrylic, box, diary)",
+         {"glass", "kaanch", "kanch", "ceramic", "cup", "cups", "steel", "metal", "acrylic",
+          "aluminium", "mirror", "tile", "plate", "trophy", "laptop", "helmet", "mobile",
+          "packaging", "box", "boxes", "carton", "kraft", "pouch", "packet", "packing", "chocolate",
+          "wood", "wooden", "mdf", "ply", "leather", "diary", "notebook", "planner", "frame",
+          "plain", "hard", "flat", "surface"}),
+        ("curved item (bottle, tumbler, sipper, jar, mug)",
+         {"bottle", "bottles", "sipper", "tumbler", "flask", "jar", "jars", "container", "pen",
+          "dabba", "mug", "mugs", "curved", "gol"}),
         ("cloth / fabric", {"kapda", "kapde", "kapra", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
     ]),
-    "fabric": ("Kis garment par?", [
+    # The script, for cloth: "Aapko T-shirt par banwana hai? Usme aapko heat press se
+    # paste karna hoga." The heat-press line goes in fabric_redirect.
+    "fabric": ("Aapko T-shirt par banwana hai ya kisi aur kapde par?", [
         ("t-shirt", {"tshirt", "tshirts", "shirt", "tee"}),
         ("hoodie / sweatshirt", {"hoodie", "sweatshirt", "jacket"}),
         ("cap", {"cap", "caps", "hat"}),
         ("bag", {"bag", "bags", "tote", "cotton bag"}),
         ("apron / uniform", {"apron", "uniform", "coat"}),
     ]),
-    "mug": ("Kaunsa mug?", [
-        ("ceramic white", {"ceramic", "white", "normal", "plain"}),
-        ("magic mug", {"magic", "colour", "color", "heat"}),
-        ("steel sipper", {"steel", "sipper", "bottle", "travel"}),
-    ]),
-    "signage": ("Kaunsa signage?", [
-        ("LED board", {"led", "glow", "light"}),
-        ("neon", {"neon"}),
-        ("backlit", {"backlit", "lollipop"}),
-        ("flex / banner", {"flex", "banner", "hoarding"}),
-    ]),
-    "print": ("Kis par print karwana hai?", [
-        ("wallpaper", {"wallpaper", "wall"}),
-        ("vinyl / glass", {"vinyl", "glass", "oneway", "window"}),
-        ("canvas / poster", {"canvas", "poster", "frame"}),
-        ("vehicle", {"car", "vehicle", "van", "canter"}),
+    "led": ("Kya chahiye?", [
+        ("LED board", {"led", "board", "light"}),
+        ("neon sign", {"neon"}),
     ]),
     "cnc": ("Kya banwana hai?", [
         ("wooden door", {"door", "doors", "darwaza"}),
-        ("jali / partition", {"jali", "partition", "screen"}),
-        ("name plate", {"nameplate", "plate", "name"}),
+        ("jali / partition", {"jali", "partition"}),
+        ("name plate", {"nameplate"}),
         ("other wood / acrylic", {"wood", "acrylic", "mdf"}),
     ]),
 }
@@ -276,7 +288,7 @@ def save(state: dict, sf: dict) -> None:
 # names both, the shape buckets win over the material one. Matching order only — the
 # options are still shown to the customer in the order the table lists them.
 _MATCH_ORDER = {
-    "uvdtf": ("curved item", "wood ya leather", "packaging", "cloth / fabric", "smooth hard surface"),
+    "uvdtf": ("curved item", "cloth / fabric", "plain / hard surface"),
 }
 
 
@@ -300,9 +312,27 @@ def _take(sf: dict, slot: str, text: str, loose: bool = False) -> None:
     speculatively to a slot nobody asked about, so the checks have to be stricter.
     """
     cleaned = (text or "").strip()
-    if not cleaned or len(cleaned) > 60 or asks_price(cleaned):
+    # A full "naam, address, mobile" reply is long; everything else this short.
+    limit = 300 if (slot == "city" and loose) else 60
+    if not cleaned or len(cleaned) > limit or asks_price(cleaned):
         return
     words = _words(cleaned)
+
+    if slot == "city" and loose:
+        # Asked for name + address + mobile together, the way the sales script does it.
+        # The number is already read into its own slot, so it is cut out of the address.
+        # A real address is several words with a house number or a comma in it — and may
+        # well contain "Stickers" or "LED" in the shop's name, so product words alone are
+        # no reason to refuse it here.
+        address = _PHONE_RE.sub("", cleaned).strip(" ,.-")
+        aw = _words(address)
+        if (len(aw) >= 3 and (re.search(r"\d", address) or "," in address)
+                and not (aw & (_NEGATIONS | _PHOTO_WORDS))):
+            sf["city"] = address
+            return
+        cleaned, words = address, aw
+        if not cleaned:
+            return
 
     if slot == "qty":
         m = _BARE_QTY_RE.search(cleaned)
@@ -353,10 +383,9 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         sf["design"] = True
 
     if not sf.get("service"):
-        for key, _label, keys in SERVICES:
-            if words & keys:
-                sf["service"] = key
-                break
+        found_service = _service_of(words)
+        if found_service:
+            sf["service"] = found_service
 
     if sf.get("service") and not sf.get("variant"):
         table = VARIANTS.get(sf["service"])
@@ -517,18 +546,18 @@ def service_menu() -> str:
 # A second ask gets a shorter nudge instead, the way a person would follow up.
 _RETRY: dict[str, str] = {
     "photo": "Us item ki ek photo mil jaye to size pakka bata dungi 📷",
-    "design": "Design ya logo bhej dijiyega, phir layout bana ke dikha deti hoon.",
+    "design": "Design ho to bhej dijiye (PDF ya PNG) — nahi to hamare catalogue se select kar lijiye 👍",
     "size": "Size ka andaaza bhi chalega — kitne inch ka chahiye?",
-    "variant": "Bas item ka naam likh dijiye — jaise bottle, glass, box ya diary. Kis cheez par lagana hai?",
+    "variant": "Aapko kispe paste karna hai — jaise bottle, glass, box ya diary? Bas naam likh dijiye.",
     # UV DTF only prints on two sheet sizes; asking it "kitne inch" was asking a question
     # with no right answer.
     "size_uvdtf": "Bas ye bata dijiye — A4 sheet chahiye ya A3?",
     "qty": "Approx kitne piece? Bas moti si ginti bata dijiye.",
     "pages": "Kitne sheet chahiye, bas andaza bata dijiye.",
-    "city": "Delivery address bata dijiye, courier usi par bhej denge.",
+    "city": "Order confirm karne ke liye bas poora naam, address aur mobile number bhej dijiye 👍",
     "phone": "Contact number bata dijiye, delivery confirm karne ke kaam aayega.",
     "name": "Naam bata dijiye na, baat karne mein aasani rahegi 🙂",
-    "payment": "Payment ka mode bata dijiye — UPI, bank ya cash?",
+    "payment": "Advance payment UPI se karenge ya bank transfer se?",
 }
 
 
@@ -569,7 +598,10 @@ _ACK: dict[str, tuple[str, ...]] = {
     "variant": ("{v} par? Zabardast, us par result bahut achha aata hai 👍", "{v} — perfect, bilkul sahi choose kiya.", "{v}, bilkul ho jaayega aur achha dikhega."),
     "photo": ("Photo mil gayi, dekh li 👍", "Mil gayi photo.", "Haan, dikh gayi 👍"),
     "design": ("Design mil gaya, shukriya 🙏", "Mil gaya design, dekh liya 👍", "Aa gaya, dekh liya maine 👍"),
-    "design_team": ("Koi baat nahi, hamari team bana degi 👍", "Theek hai, design hum bana denge.", "Arre koi dikkat nahi, bana denge hum."),
+    # The script: no design -> "yahan se catalogue mein select karna hai, SS bhejwa denge".
+    "design_team": ("Koi baat nahi 👍 Hamare catalogue se design select kar lijiye — main screenshots bhejwa deti hoon.",
+                    "Theek hai 👍 Catalogue se design chun lijiye, screenshots main bhejwa deti hoon.",
+                    "Koi dikkat nahi 👍 Hamare catalogue ke designs ke screenshots bhejwa deti hoon, wahan se select kar lijiye."),
     "design_customer": ("Badhiya! Jab ho sake yahin bhej dijiyega 👍", "Achha hai, design ready hai to kaam fast hoga — yahin bhej dijiye.", "Perfect, bas yahin bhej dijiyega jab free ho 👍"),
     "size": ("{v} — note kar liya.", "Theek hai, {v}.", "{v}, likh liya."),
     "qty": ("{v} — samajh gayi.", "{v}, theek hai.", "Achha, {v}."),
@@ -633,7 +665,7 @@ def summary(sf: dict) -> str:
         ("Address", sf.get("city")),
         ("Contact", sf.get("phone")),
         ("Payment", sf.get("payment")),
-        ("Design", {"team": "team banayegi", "customer": "customer ke paas hai, bhejenge", True: "mil gaya"}.get(sf.get("design"))),
+        ("Design", {"team": "catalogue se select karenge (SS bhejne hain)", "customer": "customer ke paas hai, bhejenge", True: "mil gaya"}.get(sf.get("design"))),
     ]
     return "\n".join(f"• {k}: {v}" for k, v in rows if v)
 
@@ -724,6 +756,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     had_design_size = bool(sf.get("sticker_in"))
     absorb(sf, text, kind)
     pages_auto = sf.pop("pages_auto", False)
+    # "Minimum order — 5 sheet." Below it, the order is booked at the minimum and the
+    # customer is told what that gets them, instead of quietly quoting 3 sheets.
+    min_applied = False
+    if sf.get("service") == "uvdtf" and sf.get("pages") and not sf.get("min_checked"):
+        sf["min_checked"] = True
+        n = re.match(r"\d+", sf["pages"])
+        if n and int(n.group()) < f.min_sheets:
+            sf["pages"] = f"{f.min_sheets} sheet (minimum)"
+            min_applied = True
 
     # Already quoted and nothing left to ask: the funnel is finished, let the normal
     # FAQ / fallback path own the conversation again.
@@ -887,11 +928,19 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         est = estimate_line(sf, cfg)
         if est:
             lines.append(est)
-    if pages_auto:
+    if pages_auto and not min_applied:
         qty_n = re.match(r"\d+", sf.get("qty") or "")
         lines.append(f.pages_auto_text.replace("{qty}", qty_n.group() if qty_n else "")
                      .replace("{pages}", re.match(r"\d+", sf["pages"]).group())
                      .replace("{sheet}", (sf.get("size") or "").upper()).strip())
+    if min_applied:
+        line = f.min_order_text.replace("{min}", str(f.min_sheets)).strip()
+        per = per_sheet(sf)
+        if per:
+            line += " " + (f.min_order_pieces.replace("{min}", str(f.min_sheets))
+                           .replace("{sheet}", (sf.get("size") or "").upper())
+                           .replace("{pieces}", str(per * f.min_sheets)).strip())
+        lines.append(line)
     # A real sales manager tells a customer about a better rate before they have to ask
     # for one. The volume breaks are on the published card, so suggesting them here is
     # not a made-up discount — it is the one they would get anyway, said a step early.

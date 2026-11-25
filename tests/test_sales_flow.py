@@ -39,15 +39,15 @@ def test_first_message_asking_price_introduces_then_asks_name():
 def test_company_intro_is_shown_even_when_service_came_first():
     _, replies = chat("UV DTF sticker ka rate kya hai?", "Gurpreet, Ludhiana se")
     r = replies[-1]
-    assert "sabhi tarah ka signage aur printing" in r and "Exhibition stall" in r
-    assert "Aapne UV DTF stickers ke baare mein poocha tha" in r
-    assert "Aapko inme se kya chahiye" not in r  # not asked again
-    assert r.index("Ye sab banate hain") < r.index("Aapka item kaunsa hai")
+    assert "sabhi tarah ka signage aur printing" in r and "Exhibition Stall" in r and "Flex Printing" in r
+    assert "Aapne UV DTF Sticker ke baare mein poocha tha" in r
+    assert "kya service chahiye" not in r  # not asked again
+    assert r.index("Hum ye sab banate hain") < r.index("Aapko kispe paste karna hai")
 
 
 def test_company_intro_is_shown_once():
     _, replies = chat("hi", "Ravi", "uv dtf", "bottle")
-    assert sum("Ye sab banate hain" in r for r in replies) == 1
+    assert sum("Hum ye sab banate hain" in r for r in replies) == 1
 
 
 def test_repeating_the_service_is_not_an_item():
@@ -120,8 +120,11 @@ def test_design_size_gives_per_piece_price_and_sheet_count():
     assert "15 piece" in replies[-1] and "Rs 13 per piece" in replies[-1]
     assert sf["size"] == "A4"  # the design size never overwrites the sheet
     sf, replies = chat("hi", "Ravi", "uv dtf", "jar", "design nahi hai", "A4", "2x2 inch", "40 piece")
-    assert sf["pages"].startswith("3 sheet") and "lagbhag 3 A4 sheet" in replies[-1]
-    assert "10+ sheet" in replies[-1]  # 3 sheets is under the volume break
+    # 40 pieces need 3 sheets, under the 5-sheet minimum: booked at the minimum, and
+    # the customer told what the minimum gets them.
+    assert sf["pages"] == "5 sheet (minimum)"
+    assert "Minimum order 5 sheet" in replies[-1] and "lagbhag 75 piece" in replies[-1]
+    assert "10+ sheet" in replies[-1]  # 5 sheets is still under the volume break
 
 
 def test_estimate_answers_the_question_before_the_rate_card():
@@ -157,3 +160,39 @@ def test_file_and_thanks_after_close_get_a_human_reply():
     assert replies[-1].startswith("Bilkul ji")
     _, replies = chat(*msgs, "theek hai thanks")
     assert replies[-1].startswith("Bilkul ji")
+
+
+def test_services_list_is_the_sales_script():
+    _, replies = chat("hi", "Ravi")
+    r = replies[-1]
+    for line in ("Digital Display Signage", "LED Board / Neon Sign", "Glow Sign Board", "Inshop Branding",
+                 "UV Printing", "UV DTF Sticker", "DTF Printing", "CNC / Laser Cutting", "Exhibition Stall",
+                 "Canvas Printing", "Flex Printing"):
+        assert line in r, line
+    assert "Mug printing" not in r and "Corporate" not in r and "Non-lit" not in r
+    assert r.rstrip().endswith("Aapko inme se kya service chahiye?")
+
+
+def test_uv_alone_or_with_printing_picks_the_right_lane():
+    assert chat("hi", "Ravi", "uv printing chahiye")[0]["service"] == "uvprint"
+    assert chat("hi", "Ravi", "uv dtf chahiye")[0]["service"] == "uvdtf"
+    assert chat("hi", "Ravi", "dtf tshirt print")[0]["service"] == "fabric"
+    assert chat("hi", "Ravi", "LED board chahiye")[0]["service"] == "led"
+
+
+def test_no_design_means_catalogue_not_team_makes_it():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai")
+    assert "catalogue" in replies[-1] and "screenshots" in replies[-1]
+
+
+def test_name_address_and_mobile_in_one_message():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "200 piece", "10 sheet",
+                       "Ravi Kumar, Sharma Stickers, 14 Model Town Ludhiana, 9876512345")
+    assert sf["phone"] == "9876512345"
+    assert "Model Town" in sf["city"] and "9876512345" not in sf["city"]
+    assert "UPI" in replies[-1] and "cash" not in replies[-1]  # prepaid only
+
+
+def test_below_minimum_sheets_is_booked_at_the_minimum():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "100 piece", "2 sheet")
+    assert sf["pages"] == "5 sheet (minimum)" and "Minimum order 5 sheet" in replies[-1]

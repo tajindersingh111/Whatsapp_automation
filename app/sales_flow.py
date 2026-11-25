@@ -402,8 +402,8 @@ def question(slot: str, sf: dict, cfg: BotConfig) -> str:
 # is actually listening.
 _ACK: dict[str, tuple[str, ...]] = {
     "name": ("Shukriya {v} ji 🙏", "Namaste {v} ji 🙏", "{v} ji, swagat hai 🙏"),
-    "service": ("{v} — bilkul, ye hamara roz ka kaam hai 👍", "{v}, theek hai.", "Haan ji, {v} ka kaam khoob hota hai yahan."),
-    "variant": ("{v} par? Haan, us par achha aata hai 👍", "{v} — note kar liya.", "{v}, bilkul ho jaayega."),
+    "service": ("Badhiya choice! {v} humara sabse demand wala kaam hai 👍", "{v} — bilkul, roz ka kaam hai, best quality milegi.", "Haan ji, {v} mein humari khaasiyat hai."),
+    "variant": ("{v} par? Zabardast, us par result bahut achha aata hai 👍", "{v} — perfect, bilkul sahi choose kiya.", "{v}, bilkul ho jaayega aur achha dikhega."),
     "photo": ("Photo mil gayi, dekh li 👍", "Mil gayi photo.", "Haan, dikh gayi 👍"),
     "design": ("Design mil gaya, shukriya 🙏", "Mil gaya design, dekh liya 👍", "Aa gaya, dekh liya maine 👍"),
     "design_team": ("Koi baat nahi, hamari team bana degi 👍", "Theek hai, design hum bana denge.", "Arre koi dikkat nahi, bana denge hum."),
@@ -604,6 +604,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             if said:
                 lines.append(said)
             break
+    # A real sales manager tells a customer about a better rate before they have to ask
+    # for one. The volume breaks are on the published card, so suggesting them here is
+    # not a made-up discount — it is the one they would get anyway, said a step early.
+    if sf.get("pages") and not before.get("pages") and sf.get("service") == "uvdtf":
+        n = re.match(r"\d+", sf["pages"])
+        if n:
+            is_a3 = (sf.get("size") or "").strip().upper() == "A3"
+            if int(n.group()) < (5 if is_a3 else 10):
+                lines.append((f.bulk_upsell_a3 if is_a3 else f.bulk_upsell).strip())
     if pushing and not sf.get("quoted"):
         objection = bool(_words(text) & _OBJECTION_WORDS)
         lines.append((f.objection_text if objection else f.deflect_text).strip())

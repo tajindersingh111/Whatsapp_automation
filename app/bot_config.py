@@ -99,7 +99,11 @@ class SalesFlowConfig(BaseModel):
     )
     # The closing line, kept apart from the rate so it is only said when there is
     # genuinely nothing left to ask.
-    quote_tail: str = "Order details hamari production/design team ko bhej di gayi hai 👍 Team abhi aapse is number par baat karegi."
+    quote_tail: str = "Order details hamari production/design team ko bhej di gayi hai 👍 Team bahut jaldi aapko is number par contact karke order finalize karegi."
+    # Said right after a low sheet count, before the customer has to ask for a better
+    # rate — the volume break is already on the card, not a discount invented on the spot.
+    bulk_upsell: str = "Ek baat bata doon — 10+ sheet A4 lene par rate Rs 180/sheet ho jaata hai (abhi Rs 200/sheet hai), kaafi bachat ho jaati hai 👍 Chahen to quantity thodi badha sakte hain."
+    bulk_upsell_a3: str = "Ek baat bata doon — 5+ sheet A3 lene par rate Rs 280/sheet ho jaata hai (abhi Rs 300/sheet hai) 👍 Chahen to quantity thodi badha sakte hain."
     # Said when the last question gets answered after the rate already went out.
     closing_intro: str = "Bas ji, pura detail note ho gaya 🙏"
     # Said instead when the rate came out early because the customer pushed for it.

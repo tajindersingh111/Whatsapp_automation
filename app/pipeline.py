@@ -86,6 +86,7 @@ def serialize_inbound(m: InboundMessage) -> dict:
         "button_payload": m.button_payload,
         "referral": m.referral,
         "context_message_id": m.context_message_id,
+        "media_id": m.media_id,
     }
 
 
@@ -108,7 +109,8 @@ async def ingest_inbound(session: AsyncSession, tenant: Tenant, m: InboundMessag
     if contact.lead_stage == "new":
         contact.lead_stage = "browsing"
     conv = await get_or_create_conversation(session, tenant.id, contact, is_playground=is_playground)
-    payload = {"button_payload": m.button_payload, "referral": m.referral, "context": m.context_message_id}
+    payload = {"button_payload": m.button_payload, "referral": m.referral, "context": m.context_message_id,
+               "media_id": m.media_id}
     msg = await record_message(
         session,
         conv,
@@ -145,6 +147,7 @@ async def handle_inbound(session: AsyncSession, job: Job) -> None:
         button_payload=data.get("button_payload"),
         referral=data.get("referral"),
         context_message_id=data.get("context_message_id"),
+        media_id=data.get("media_id"),
     )
     ingested = await ingest_inbound(session, tenant, m)
     if ingested is None:

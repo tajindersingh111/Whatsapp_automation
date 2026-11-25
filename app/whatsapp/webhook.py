@@ -18,6 +18,10 @@ class InboundMessage:
     # Click-to-WhatsApp ad referral, if the chat started from an ad.
     referral: dict | None = None
     context_message_id: str | None = None
+    # Meta's id for the photo/file itself, for image/video/document/audio/sticker
+    # messages. Not a URL — it has to be exchanged for one with the access token,
+    # and that URL expires in minutes, so nothing more than the id is kept.
+    media_id: str | None = None
     raw: dict = field(default_factory=dict)
 
 
@@ -71,34 +75,34 @@ def _ts(value: str | None) -> datetime:
         return datetime.now(timezone.utc)
 
 
-def _message_text(msg: dict) -> tuple[str, str, str | None]:
-    """Returns (kind, text, button_payload)."""
+def _message_text(msg: dict) -> tuple[str, str, str | None, str | None]:
+    """Returns (kind, text, button_payload, media_id)."""
     kind = msg.get("type", "unknown")
     if kind == "text":
-        return kind, msg.get("text", {}).get("body", ""), None
+        return kind, msg.get("text", {}).get("body", ""), None, None
     if kind == "interactive":
         inter = msg.get("interactive", {})
         reply = inter.get("button_reply") or inter.get("list_reply") or {}
-        return "button", reply.get("title", ""), reply.get("id")
+        return "button", reply.get("title", ""), reply.get("id"), None
     if kind == "button":  # quick reply on a template
         btn = msg.get("button", {})
-        return "button", btn.get("text", ""), btn.get("payload")
+        return "button", btn.get("text", ""), btn.get("payload"), None
     if kind in ("image", "video", "document", "audio", "sticker"):
         media = msg.get(kind, {})
         caption = media.get("caption", "")
-        return kind, caption or f"[customer sent a {kind}]", None
+        return kind, caption or f"[customer sent a {kind}]", None, media.get("id")
     if kind == "location":
         loc = msg.get("location", {})
-        return kind, f"[location: {loc.get('name') or ''} {loc.get('address') or ''} ({loc.get('latitude')},{loc.get('longitude')})]", None
+        return kind, f"[location: {loc.get('name') or ''} {loc.get('address') or ''} ({loc.get('latitude')},{loc.get('longitude')})]", None, None
     if kind == "order":  # WhatsApp catalog cart
         order = msg.get("order", {})
         items = ", ".join(
             f"{i.get('quantity')} x {i.get('product_retailer_id')}" for i in order.get("product_items", [])
         )
-        return kind, f"[cart from WhatsApp catalog: {items}] {order.get('text', '')}".strip(), None
+        return kind, f"[cart from WhatsApp catalog: {items}] {order.get('text', '')}".strip(), None, None
     if kind == "reaction":
-        return kind, f"[reacted {msg.get('reaction', {}).get('emoji', '')}]", None
-    return kind, f"[unsupported message type: {kind}]", None
+        return kind, f"[reacted {msg.get('reaction', {}).get('emoji', '')}]", None, None
+    return kind, f"[unsupported message type: {kind}]", None, None
 
 
 def _opt_ts(value) -> datetime | None:
@@ -154,7 +158,7 @@ def parse_webhook(payload: dict) -> tuple[list[InboundMessage], list[StatusUpdat
             phone_number_id = value.get("metadata", {}).get("phone_number_id", "")
             names = {c.get("wa_id"): c.get("profile", {}).get("name") for c in value.get("contacts", [])}
             for msg in value.get("messages", []):
-                kind, text, payload_id = _message_text(msg)
+                kind, text, payload_id, media_id = _message_text(msg)
                 messages.append(
                     InboundMessage(
                         phone_number_id=phone_number_id,
@@ -167,6 +171,7 @@ def parse_webhook(payload: dict) -> tuple[list[InboundMessage], list[StatusUpdat
                         button_payload=payload_id,
                         referral=msg.get("referral"),
                         context_message_id=(msg.get("context") or {}).get("id"),
+                        media_id=media_id,
                         raw=msg,
                     )
                 )

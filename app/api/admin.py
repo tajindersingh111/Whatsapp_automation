@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import ValidationError
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,7 @@ from app.security import decrypt, decrypt_json, encrypt, encrypt_json, generate_
 from app.services import catalog
 from app.services.conversations import in_service_window
 from app.services.messaging import send_message, sender_for
-from app.whatsapp.client import SimulatedSender, WhatsAppError, check_connection, discover_numbers, text_message
+from app.whatsapp.client import SimulatedSender, WhatsAppError, check_connection, discover_numbers, download_media, text_message
 from app.whatsapp.webhook import InboundMessage
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -434,9 +434,33 @@ async def conversation_messages(tenant_id: uuid.UUID, conv_id: int, session: Asy
     rows = (await session.scalars(select(Message).where(Message.conversation_id == conv_id).order_by(Message.id.desc()).limit(200))).all()
     return [
         {"id": m.id, "direction": m.direction, "sender": m.sender, "kind": m.kind, "body": m.body, "status": m.status, "error": m.error,
-         "created_at": m.created_at, "payload": m.payload if m.direction == "out" else {}}
+         "created_at": m.created_at, "payload": m.payload if m.direction == "out" else {},
+         # Everything else inbound stays hidden (it is the customer's, not ours to show
+         # back verbatim), but a media id is just a pointer to a photo they sent us —
+         # the dashboard needs it to fetch and show that photo.
+         "media_id": (m.payload or {}).get("media_id") if m.direction == "in" and m.kind in ("image", "video", "document", "sticker") else None}
         for m in reversed(rows)
     ]
+
+
+@router.get("/tenants/{tenant_id}/messages/{message_id}/media")
+async def message_media(tenant_id: uuid.UUID, message_id: int, session: AsyncSession = Depends(get_session)) -> Response:
+    """Stream a photo/file a customer sent us. Fetched fresh from Meta every time —
+    their download URL expires in minutes, so nothing is cached here."""
+    msg = await session.get(Message, message_id)
+    if msg is None or msg.tenant_id != tenant_id or msg.direction != "in":
+        raise HTTPException(status_code=404)
+    media_id = (msg.payload or {}).get("media_id")
+    if not media_id:
+        raise HTTPException(status_code=404, detail="no media on this message")
+    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
+    if account is None:
+        raise HTTPException(status_code=404, detail="WhatsApp is not connected")
+    try:
+        data, mime = await download_media(http_client(), get_settings().meta_graph_version, media_id, decrypt(account.access_token_enc))
+    except WhatsAppError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=data, media_type=mime)
 
 
 @router.post("/tenants/{tenant_id}/conversations/{conv_id}/messages")

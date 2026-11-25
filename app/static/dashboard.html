@@ -745,6 +745,7 @@ views.inbox = async (el) => {
       <button class="primary" id="send" ${c.can_reply ? "" : "disabled"}>Send</button>
     </div>`;
   const chat = $("#conv_chat", panel); chat.scrollTop = chat.scrollHeight;
+  loadInboundMedia(panel, c.id);
   const setMode = async (mode) => { await api(T(`/conversations/${c.id}/mode`), { method: "POST", body: { mode } }); render(); };
   const take = $("#take", panel); if (take) take.onclick = () => setMode("human");
   const rel = $("#release", panel); if (rel) rel.onclick = () => setMode("bot");
@@ -789,11 +790,32 @@ function chips(m, clickable) {
   return "";
 }
 
+async function loadInboundMedia(panel, convId) {
+  // Meta's media URL expires in minutes, so this is always a fresh authenticated
+  // fetch, never a cached src — a plain <img src> can't carry our Bearer token.
+  for (const ph of panel.querySelectorAll(".media-ph")) {
+    const msgId = ph.dataset.mediaId;
+    try {
+      const res = await fetch(T(`/messages/${msgId}/media`), { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { ph.textContent = "📷 Photo could not be loaded"; continue; }
+      const img = new Image();
+      img.src = URL.createObjectURL(await res.blob());
+      img.alt = "";
+      ph.replaceWith(img);
+    } catch {
+      ph.textContent = "📷 Photo could not be loaded";
+    }
+  }
+}
+
 function bubble(m, clickable = false) {
   const out = m.direction === "out";
   const it = m.payload?.interactive;
   const imgUrl = m.payload?.image?.link || it?.header?.image?.link;
-  const img = imgUrl ? `<img src="${esc(imgUrl)}" alt="">` : "";
+  // A customer's own photo has no public link — it is fetched with our admin token
+  // and dropped in after the chat renders (see loadInboundMedia). This is just the slot.
+  const inboundMedia = !out && m.media_id ? `<div class="media-ph muted small" data-media-id="${m.id}" style="padding:40px 0;text-align:center;border-radius:8px;background:var(--bg-soft,rgba(127,127,127,.08));margin-bottom:6px">📷 Loading photo…</div>` : "";
+  const img = imgUrl ? `<img src="${esc(imgUrl)}" alt="">` : inboundMedia;
   const text = it ? (it.body?.text || "") : m.body;
   const time = m.created_at ? new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   const meta = out ? `<small>${esc(m.sender || "")}${time ? " · " + time : ""}${m.status ? " " + ticks(m.status) : ""}${m.error ? ` <span class="error">${esc(errText(m.error))}</span>` : ""}</small>`

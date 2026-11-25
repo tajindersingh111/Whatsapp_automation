@@ -415,6 +415,26 @@ async def upload_media(http: httpx.AsyncClient, graph_version: str, phone_number
     return str(body["id"])
 
 
+async def download_media(http: httpx.AsyncClient, graph_version: str, media_id: str, access_token: str) -> tuple[bytes, str]:
+    """Fetch a photo/file a customer sent us. Returns (bytes, mime type).
+
+    Two calls, both needing the token: the first resolves the media id to a download
+    URL (Meta's media ids are not themselves fetchable), the second needs the same
+    Authorization header again — the URL alone is not public. Meta's own URLs expire in
+    minutes, so this is done fresh on every view rather than cached.
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+    meta = _json(await http.get(f"https://graph.facebook.com/{graph_version}/{media_id}", headers=headers, timeout=20))
+    url = meta.get("url")
+    if not url:
+        err = meta.get("error", {}) if isinstance(meta, dict) else {}
+        raise WhatsAppError(f"Meta media lookup failed: {err.get('message') or 'no url returned'}", code=err.get("code"))
+    resp = await http.get(url, headers=headers, timeout=30)
+    if resp.status_code >= 400:
+        raise WhatsAppError(f"Meta media download failed ({resp.status_code})", status=resp.status_code)
+    return resp.content, meta.get("mime_type") or "application/octet-stream"
+
+
 _ANY_CODE = re.compile(r"^\s*(\d{4,6}):|\(code (\d+)\)")
 
 # Meta decided not to deliver this marketing message to this customer (not engaged / too much marketing).

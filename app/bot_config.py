@@ -104,6 +104,12 @@ class SalesFlowConfig(BaseModel):
     # rate — the volume break is already on the card, not a discount invented on the spot.
     bulk_upsell: str = "Ek baat bata doon — 10+ sheet A4 lene par rate Rs 180/sheet ho jaata hai (abhi Rs 200/sheet hai), kaafi bachat ho jaati hai 👍 Chahen to quantity thodi badha sakte hain."
     bulk_upsell_a3: str = "Ek baat bata doon — 5+ sheet A3 lene par rate Rs 280/sheet ho jaata hai (abhi Rs 300/sheet hai) 👍 Chahen to quantity thodi badha sakte hain."
+    # A bare "thanks"/"ok"/"hi" once the deal is done, or after a soft close. Falling
+    # through to "samajh nahi aaya" right after closing a sale is what makes a bot
+    # obvious; this keeps the door open instead.
+    social_reply: str = "Bilkul ji 🙏 Koi aur sawaal ho ya kuch aur chahiye ho to bata dijiyega, main yahin hoon."
+    # Said once, when the customer signals they want this quick.
+    urgency_ack: str = "Bilkul samajh sakti hoon, jaldi chahiye aapko — main priority mein le leti hoon, bas ye detail jaldi se complete kar lein 👍"
     # Said when the last question gets answered after the rate already went out.
     closing_intro: str = "Bas ji, pura detail note ho gaya 🙏"
     # Said instead when the rate came out early because the customer pushed for it.

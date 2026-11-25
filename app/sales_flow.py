@@ -115,6 +115,19 @@ _PRICE_WORDS = {"price", "rate", "rates", "cost", "daam", "bhav", "quotation", "
 # The subset that is a complaint rather than a question.
 _OBJECTION_WORDS = {"mehnga", "mahnga", "mehngi", "budget", "expensive", "zyada"}
 
+# Said when they want it quick. Worth one line acknowledging it, not silently ignored
+# while the funnel carries on as if nothing was said — that is what makes a bot obvious.
+_URGENCY_WORDS = {"jaldi", "urgent", "urgently", "turant", "fatafat", "emergency", "asap"}
+
+# A plain "thanks"/"ok"/"hi" once the deal is done, or after someone has backed off,
+# still deserves a human reply. Falling through to "samajh nahi aaya" right after
+# closing a sale is the single most robotic thing that could happen here.
+_SOCIAL_WORDS = {
+    "thanks", "thank", "thanku", "thankyou", "tnx", "dhanyavaad", "dhanyawad", "shukriya",
+    "ok", "okay", "k", "theek", "thik", "acha", "accha", "great", "nice", "super", "cool",
+    "badhiya", "perfect", "done", "hi", "hello", "hey", "namaste", "ji", "bye", "byee",
+}
+
 # Someone stepping back. Pushing the next question at them is how a bot loses a lead
 # that a person would have kept warm.
 _BACKING_OFF = ("chhodo", "chodo", "rehne do", "rahne do", "nahi chahiye", "nhi chahiye",
@@ -169,6 +182,19 @@ def _words(text: str) -> set[str]:
 
 def asks_price(text: str) -> bool:
     return bool(_words(text) & _PRICE_WORDS)
+
+
+#  Address filler that rides along with almost every real message ("thanks bhai",
+# "ok yaar") and carries no meaning of its own, so it should not stop a message from
+# counting as social.
+_FILLER_WORDS = {"bhai", "yaar", "sir", "mam", "boss", "g", "bro", "dost"}
+
+
+def _is_social(text: str) -> bool:
+    """True for a message that is nothing but a pleasantry — "thanks bhai", "ok yaar",
+    "hi" — and has no slot-answer or question buried in it."""
+    w = _words(text)
+    return bool(w & _SOCIAL_WORDS) and not (w - _SOCIAL_WORDS - _FILLER_WORDS)
 
 
 def load(state: dict) -> dict:
@@ -519,12 +545,18 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             if any(sf.get(s_) and not before.get(s_) for s_ in SLOTS):
                 return (f.closing_intro.strip() + "\n" + summary(sf)
                         + "\n\n" + f.quote_tail.strip()), True
+        # The deal is done and this message answered nothing new — but a bare "thanks"
+        # or "ok" still gets a human reply instead of silence.
+        if _is_social(text):
+            return f.social_reply.strip(), False
         return None, False
 
     # Once someone has stepped back, stay stepped back. next_slot() returns None while
     # paused, and without this that reads as "nothing left to ask" and fires a quote at
     # the customer who just said not now.
     if sf.get("paused"):
+        if _is_social(text):
+            return f.social_reply.strip(), False
         return None, False
 
     # A free-text answer to the question we actually asked — take it at face value
@@ -613,6 +645,11 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             is_a3 = (sf.get("size") or "").strip().upper() == "A3"
             if int(n.group()) < (5 if is_a3 else 10):
                 lines.append((f.bulk_upsell_a3 if is_a3 else f.bulk_upsell).strip())
+    # Said once, not on every message — a customer who keeps saying "jaldi" does not
+    # want to hear the same reassurance back each time.
+    if not sf.get("quoted") and not sf.get("urgency_acked") and (_words(text) & _URGENCY_WORDS):
+        sf["urgency_acked"] = True
+        lines.append(f.urgency_ack.strip())
     if pushing and not sf.get("quoted"):
         objection = bool(_words(text) & _OBJECTION_WORDS)
         lines.append((f.objection_text if objection else f.deflect_text).strip())

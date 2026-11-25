@@ -25,10 +25,29 @@ def test_name_is_first_word_only():
     assert sf["name"] == "Tajinder"
 
 
+def test_name_followed_by_a_comma():
+    sf, _ = chat("hi", "Gurpreet, Ludhiana se")
+    assert sf["name"] == "Gurpreet"
+
+
 def test_first_message_asking_price_introduces_then_asks_name():
     _, replies = chat("Hi price kya hai uv dtf sticker ka")
     assert replies[0].startswith("Namaste") and "naam" in replies[0]
     assert "\n\n" not in replies[0]  # one line, not three stacked paragraphs
+
+
+def test_company_intro_is_shown_even_when_service_came_first():
+    _, replies = chat("UV DTF sticker ka rate kya hai?", "Gurpreet, Ludhiana se")
+    r = replies[-1]
+    assert "sabhi tarah ka signage aur printing" in r and "Exhibition stall" in r
+    assert "Aapne UV DTF stickers ke baare mein poocha tha" in r
+    assert "Aapko inme se kya chahiye" not in r  # not asked again
+    assert r.index("Ye sab banate hain") < r.index("Aapka item kaunsa hai")
+
+
+def test_company_intro_is_shown_once():
+    _, replies = chat("hi", "Ravi", "uv dtf", "bottle")
+    assert sum("Ye sab banate hain" in r for r in replies) == 1
 
 
 def test_repeating_the_service_is_not_an_item():
@@ -61,6 +80,14 @@ def test_has_design_is_recorded_and_file_upgrades_it():
     assert sf["design"] is True and replies[-1].startswith("Design mil gaya")
 
 
+def test_wanting_a_logo_printed_is_not_having_the_design():
+    sf, replies = chat("hi", "Gurpreet", "uv dtf", "mere gym ki water bottles pe logo lagwana hai, steel ki hain")
+    assert not sf.get("design") and "design ready" in replies[-1]
+    sf, replies = chat("hi", "Gurpreet", "uv dtf", "mere gym ki water bottles pe logo lagwana hai, steel ki hain",
+                       "haan logo hai mere paas CDR mein")
+    assert sf["design"] == "customer" and replies[-1].startswith(("Badhiya", "Achha", "Perfect"))
+
+
 def test_refusal_is_never_an_address():
     sf, _ = chat("hi", "Ravi", "uv dtf", "jar", "nahi photo nahi")
     assert not sf.get("city")
@@ -88,10 +115,45 @@ def test_objection_that_triggers_the_rate_is_answered_first():
     assert replies[-1].startswith("Samajh sakti hoon") and "Rate ye rahe" in replies[-1]
 
 
+def test_design_size_gives_per_piece_price_and_sheet_count():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "jar", "design nahi hai", "A4", "2x2 inch")
+    assert "15 piece" in replies[-1] and "Rs 13 per piece" in replies[-1]
+    assert sf["size"] == "A4"  # the design size never overwrites the sheet
+    sf, replies = chat("hi", "Ravi", "uv dtf", "jar", "design nahi hai", "A4", "2x2 inch", "40 piece")
+    assert sf["pages"].startswith("3 sheet") and "lagbhag 3 A4 sheet" in replies[-1]
+    assert "10+ sheet" in replies[-1]  # 3 sheets is under the volume break
+
+
+def test_estimate_answers_the_question_before_the_rate_card():
+    _, replies = chat("hi", "Gurpreet", "uv dtf", "bottle", "design nahi hai", "rate?",
+                      "A4 lunga. ek sheet mein kitne logo aayenge? logo 3 inch ka hai")
+    assert replies[-1].index("6 piece") < replies[-1].index("Rate ye rahe")
+
+
+GURPREET = ("Hello, UV DTF sticker ka rate kya hai?", "Gurpreet, Ludhiana se",
+            "mere gym ki water bottles pe logo lagwana hai, steel ki hain", "haan logo hai mere paas CDR mein",
+            "A4 lunga. ek sheet mein kitne logo aayenge? logo 3 inch ka hai")
+
+
+def test_objection_after_the_quote_is_answered_with_the_bulk_rate():
+    sf, replies = chat(*GURPREET, "33 rupay ek logo? thoda zyada hai bhai. 300 piece chahiye")
+    r = replies[-1]
+    assert r.startswith("Samajh sakti hoon")
+    assert "50 A4 sheet" in r and "Rs 180/sheet" in r and "Rs 30 per piece" in r
+    assert "Rate ye rahe" not in r  # the rate card is not sent a second time
+
+
+def test_zyada_without_money_context_is_not_a_price_complaint():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "zyada time lagega kya")
+    assert not replies[-1].startswith("Samajh sakti hoon")
+
+
 def test_file_and_thanks_after_close_get_a_human_reply():
     msgs = ("hi", "Ravi", "uv dtf", "box", "design nahi hai", "A3", "100", "6 sheet",
             "Jaipur, Malviya Nagar", "yahi", "UPI")
     _, replies = chat(*msgs, "<image>")
     assert replies[-1].startswith("Mil gaya")
     _, replies = chat(*msgs, "thanks bhai")
+    assert replies[-1].startswith("Bilkul ji")
+    _, replies = chat(*msgs, "theek hai thanks")
     assert replies[-1].startswith("Bilkul ji")

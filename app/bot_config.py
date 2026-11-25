@@ -100,6 +100,20 @@ class SalesFlowConfig(BaseModel):
     # The closing line, kept apart from the rate so it is only said when there is
     # genuinely nothing left to ask.
     quote_tail: str = "Order details hamari production/design team ko bhej di gayi hai 👍 Team bahut jaldi aapko is number par contact karke order finalize karegi."
+    # Starting rate per sheet, for the per-piece estimate. Keep in step with price_text.
+    sheet_rate: dict[str, int] = Field(default_factory=lambda: {"A4": 200, "A3": 300})
+    # {size} their design, {sheet} A4/A3, {n} pieces per sheet, {per_piece} Rs, {rate} Rs/sheet.
+    estimate_text: str = "Aapka {size} ka design ek {sheet} sheet par lagbhag {n} piece aayega — yaani approx Rs {per_piece} per piece (Rs {rate}/sheet ke hisaab se) 👍"
+    estimate_too_big: str = "{size} ka design {sheet} sheet se bada pad raha hai — team aapko sahi sheet/layout suggest karegi."
+    # Volume break per sheet size: [from this many sheets, rate per sheet]. Keep in step
+    # with price_text.
+    bulk_tier: dict[str, list[int]] = Field(default_factory=lambda: {"A4": [10, 180], "A3": [5, 280]})
+    # {pages} their sheet count, {sheet} A4/A3, {rate} bulk Rs/sheet, {piece} per-piece clause.
+    bulk_text: str = "{pages} sheet par aapko bulk rate milega — Rs {rate}/sheet{piece} 👍"
+    # A plain price question after the rate card already went out.
+    price_again: str = "Rate maine upar bhej diya hai 👆 Koi confusion ho to team call par sab samjha degi."
+    # Sheets worked out from quantity and design size, instead of asking.
+    pages_auto_text: str = "{qty} piece ke liye lagbhag {pages} {sheet} sheet lagengi 👍"
     # Said right after a low sheet count, before the customer has to ask for a better
     # rate — the volume break is already on the card, not a discount invented on the spot.
     bulk_upsell: str = "Ek baat bata doon — 10+ sheet A4 lene par rate Rs 180/sheet ho jaata hai (abhi Rs 200/sheet hai), kaafi bachat ho jaati hai 👍 Chahen to quantity thodi badha sakte hain."
@@ -122,11 +136,23 @@ class SalesFlowConfig(BaseModel):
         "Ye sab banate hain:\n{services}\n\n"
         "Aapko inme se kya chahiye?"
     )
+    # The same company intro, shown when the customer named the service before we could
+    # ask (most ad clicks: "UV DTF ka rate kya hai?"). The sales script always opens with
+    # it, and skipping it meant they never heard what else HS does.
+    company_intro: str = (
+        "Hamare yaha sabhi tarah ka signage aur printing ka kaam hota hai, bulk order mein \U0001f44d\n\n"
+        "Ye sab banate hain:\n{services}"
+    )
+    # Follows company_intro, so the service they already asked for is not asked again.
+    service_known: str = "Aapne {service} ke baare mein poocha tha — ye hamara sabse demand wala kaam hai \U0001f44d"
     # {prompt} and {options} come from the chosen service's fork.
     ask_variant: str = "{prompt}\n{options}"
     ask_name: str = "Namaste 🙏 Main Simran, HS Company se. Aapka naam jaan lun?"
     # First message already asks the rate (most ad clicks do). Promise it, then the name.
     ask_name_price: str = "Namaste 🙏 Main Simran, HS Company se. Rate zaroor bataungi — bas pehle aapka naam jaan lun?"
+    # When nothing matched. The menu bot's version says "neeche se chuniye ... jaise
+    # 'blue bedsheet'" — buttons that are gone, for a shop that does not sell bedsheets.
+    not_understood: str = "Ye main theek se samajh nahi paayi 🙏 Thoda aur bata dijiye — ya team se baat karni ho to 'team se baat' likh dijiye."
     # "photo/design abhi nahi hai" while we asked for the design — fine either way.
     no_problem_design: str = "Koi baat nahi 👍 Jab ho sake bhej dijiyega, warna hamari team bana degi."
     # A photo/file arriving after the quote or a soft close.

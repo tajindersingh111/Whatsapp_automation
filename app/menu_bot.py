@@ -158,10 +158,13 @@ class MenuBot:
             return await self.product_list(products, self.m.search_results_text)
 
         self.state["misses"] = int(self.state.get("misses", 0)) + 1
+        if self.cfg.sales_flow.enabled:
+            # The funnel opens the chat, so the button menu's "greeted" flag is never set
+            # — this used to send that menu, buttons and all, to a customer who had just
+            # finished an order and typed "theek hai thanks".
+            return await self.send(text_message(self.fmt(self.cfg.sales_flow.not_understood)))
         if not self.state.get("greeted"):
             return await self.welcome()
-        if self.cfg.sales_flow.enabled:
-            return await self.send(text_message(self.fmt(self.m.not_understood)))
         await self.send(buttons_message(self.fmt(self.m.not_understood), self.main_buttons()))
 
     async def sales_step(self, text: str, kind: str) -> bool:

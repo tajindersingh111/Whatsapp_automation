@@ -112,9 +112,11 @@ _PRICE_WORDS = {"price", "rate", "rates", "cost", "daam", "bhav", "quotation", "
                 "charge", "charges", "kitna", "kitne", "kitni", "paisa", "paise", "rupaye", "rupees",
                 # Complaining about the price is a price message too. Missing these let the
                 # FAQ answer "mehnga hai" with the sticker rate card — to a mug customer.
-                "mehnga", "mahnga", "mehngi", "sasta", "sasti", "budget", "expensive"}
+                "mehnga", "mahnga", "mehngi", "sasta", "sasti", "budget", "expensive",
+                # "33 rupay ek logo?" — how it is actually typed.
+                "rupay", "rupye", "rupya", "rs"}
 # The subset that is a complaint rather than a question.
-_OBJECTION_WORDS = {"mehnga", "mahnga", "mehngi", "budget", "expensive", "zyada"}
+_OBJECTION_WORDS = {"mehnga", "mahnga", "mehngi", "budget", "expensive", "zyada", "jyada"}
 
 # Said when they want it quick. Worth one line acknowledging it, not silently ignored
 # while the funnel carries on as if nothing was said — that is what makes a bot obvious.
@@ -137,8 +139,12 @@ _NO_DESIGN = {"nahi", "nhi", "no", "nahin", "banado", "banwana", "banwane", "ban
 # "photo abhi nahi hai" is about the product photo, not the artwork. Reading its "nahi"
 # as "design nahi hai" told a customer who had a logo that the team would make one.
 _PHOTO_WORDS = {"photo", "pic", "picture", "image", "tasveer", "foto"}
-# "design hai mere paas", "logo ready hai" — they have artwork and will send it.
-_HAS_DESIGN_WORDS = {"hai", "ready", "haan", "ha", "yes", "bhejta", "bhejti", "bhej", "bhejunga", "paas", "mere"}
+# "design hai mere paas", "logo ready hai" — they have artwork and will send it. Only
+# words that mean *having* the file: "logo lagwana hai" also has "logo" and "hai" but
+# means they want a logo printed, and reading it as "has a design" skipped the design
+# question for a customer who had not answered it yet.
+_HAS_DESIGN_WORDS = {"paas", "ready", "bhej", "bhejta", "bhejti", "bhejunga", "bhejungi",
+                     "cdr", "png", "pdf", "file", "banaya", "bana"}
 _NEGATIONS = {"nahi", "nhi", "nahin", "no", "nai"}
 # Never an address: a refusal, a remark about the photo or design, a bare yes/no. Found
 # live — "nahi photo nahi" was saved as the delivery address, the address question was
@@ -164,6 +170,49 @@ _SIZE_RE = re.compile(
     r"|(\d+(?:\.\d+)?)\s*(inch|inches|cm|mm|feet|ft)\b",
     re.I,
 )
+# UV DTF: the sheet the rate is per, and the size of one design on it.
+_SHEET_RE = re.compile(r"\bA[34]\b", re.I)
+_SHEET_IN = {"A4": (8.27, 11.69), "A3": (11.69, 16.54)}
+_DIM_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:x|\*|by|×)\s*(\d+(?:\.\d+)?)\s*(inch|inches|in|cm|mm)\b"
+    r"|(\d+(?:\.\d+)?)\s*(inch|inches|cm|mm)\b",
+    re.I,
+)
+_TO_INCH = {"inch": 1.0, "inches": 1.0, "in": 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4}
+# Breathing room for cutting: a margin round the sheet and a gap between pieces.
+_SHEET_MARGIN_IN = 0.4
+_PIECE_GAP_IN = 0.2
+
+
+def _dims_inches(text: str | None) -> tuple[float, float] | None:
+    m = _DIM_RE.search(text or "")
+    if not m:
+        return None
+    if m.group(1):
+        k = _TO_INCH[m.group(3).lower()]
+        return float(m.group(1)) * k, float(m.group(2)) * k
+    k = _TO_INCH[m.group(5).lower()]
+    side = float(m.group(4)) * k
+    return side, side  # "3 inch ka logo" — about that big each way
+
+
+def _dims_label(text: str | None) -> str | None:
+    m = _DIM_RE.search(text or "")
+    return m.group(0).strip() if m else None
+
+
+def per_sheet(sf: dict) -> int | None:
+    """Roughly how many of their design fit on the chosen sheet, either way round."""
+    sheet = _SHEET_IN.get((sf.get("size") or "").upper())
+    dims = sf.get("sticker_in")
+    if not sheet or not dims:
+        return None
+    w, h = dims
+    W, H = sheet[0] - _SHEET_MARGIN_IN, sheet[1] - _SHEET_MARGIN_IN
+    fit = lambda a, b: int(W // (a + _PIECE_GAP_IN)) * int(H // (b + _PIECE_GAP_IN))
+    return max(fit(w, h), fit(h, w))
+
+
 _QTY_RE = re.compile(r"(\d{1,6})\s*(piece|pieces|pcs|pc|nos|sticker|stickers|sheet|sheets|mug|mugs|bottle|bottles|box|boxes|tshirt|tshirts|unit|units)\b", re.I)
 # "500", "500-600", "500 approx" — nobody repeats the unit they were just asked about.
 # Only read as a quantity when the quantity was the question, so a pincode or a price
@@ -200,7 +249,9 @@ def asks_price(text: str) -> bool:
 #  Address filler that rides along with almost every real message ("thanks bhai",
 # "ok yaar") and carries no meaning of its own, so it should not stop a message from
 # counting as social.
-_FILLER_WORDS = {"bhai", "yaar", "sir", "mam", "boss", "g", "bro", "dost"}
+_FILLER_WORDS = {"bhai", "yaar", "sir", "mam", "boss", "g", "bro", "dost",
+                 # "theek hai thanks", "bahut shukriya", "ho gaya" — glue, not content.
+                 "hai", "h", "ho", "gaya", "gya", "bahut", "bhut", "aapka", "apka", "aap", "sab", "ab"}
 
 
 def _is_social(text: str) -> bool:
@@ -323,7 +374,20 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
                 # will print, "mug" tells them what they are quoting.
                 sf["item_said"] = found[1]
 
-    if not sf.get("size"):
+    if sf.get("service") == "uvdtf":
+        # UV DTF has two sizes that matter and they are different things: the sheet it
+        # prints on (A4/A3 — what the rate is per) and the size of their design. "logo 3
+        # inch ka hai" used to be dropped, or worse, taken as the sheet size.
+        if not sf.get("size"):
+            m = _SHEET_RE.search(text or "")
+            if m:
+                sf["size"] = m.group(0).upper()
+        if not sf.get("sticker_in"):
+            dims = _dims_inches(text)
+            if dims:
+                sf["sticker_in"] = list(dims)
+                sf["sticker_size"] = _dims_label(text)
+    elif not sf.get("size"):
         m = _SIZE_RE.search(text or "")
         if m:
             sf["size"] = m.group(0).strip()
@@ -341,6 +405,16 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         m = _PAGES_RE.search(text or "")
         if m:
             sf["pages"] = m.group(1).strip() + " sheet"
+
+    # Once we know their design size, the sheet and how many pieces, the number of
+    # sheets is arithmetic — ours to do, not a question for a customer who has no idea
+    # how many 3-inch logos fit on an A4.
+    if not sf.get("pages") and sf.get("service") == "uvdtf":
+        per = per_sheet(sf)
+        qty = re.match(r"\d+", sf.get("qty") or "")
+        if per and qty:
+            sf["pages"] = f"{-(-int(qty.group()) // per)} sheet (approx)"
+            sf["pages_auto"] = True
 
     # A phone number is read whenever it is said, same as payment — people drop it in
     # early ("order confirm karni hai, mera number 98293...") and re-asking it after
@@ -389,7 +463,10 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
             # meant to read, and it is what the human agent's own script says to do
             # ("first letter only"). The guards run on this one word, not the whole
             # reply, so trailing context never blocks a real name from landing.
-            first = cleaned.split()[0]
+            # By word, not by whitespace: "Gurpreet, Ludhiana se" split on spaces gives
+            # "gurpreet," — the comma failed isalpha() and the name was never taken.
+            tokens = _WORD_RE.findall(cleaned)
+            first = tokens[0] if tokens else ""
             if (2 <= len(first) <= 20 and first.isalpha()
                     and first not in _NOT_A_NAME
                     and not (_words(first) & _PRODUCT_WORDS)
@@ -550,6 +627,7 @@ def summary(sf: dict) -> str:
         ("Service", _SERVICE_LABEL.get(sf.get("service") or "", sf.get("service"))),
         ("Item", _item_line(sf)),
         ("Size", sf.get("size")),
+        ("Design size", sf.get("sticker_size")),
         ("Quantity", sf.get("qty")),
         ("Pages", sf.get("pages")),
         ("Address", sf.get("city")),
@@ -567,6 +645,43 @@ _STALE_TAIL_RE = re.compile(
 )
 
 
+def estimate_line(sf: dict, cfg: BotConfig) -> str | None:
+    """'Aapka 3 inch logo A4 par ~6 aayega — approx Rs 33/piece.' The per-piece number is
+    what a customer actually compares, and "Rs 200 per sheet" on its own hides it."""
+    f = cfg.sales_flow
+    if sf.get("service") != "uvdtf":
+        return None
+    sheet = (sf.get("size") or "").upper()
+    per = per_sheet(sf)
+    if per is None:
+        return None
+    label = sf.get("sticker_size") or "design"
+    if per == 0:
+        return f.estimate_too_big.replace("{size}", label).replace("{sheet}", sheet).strip()
+    rate = f.sheet_rate.get(sheet)
+    if not rate:
+        return None
+    return (f.estimate_text.replace("{size}", label).replace("{sheet}", sheet)
+            .replace("{n}", str(per)).replace("{per_piece}", str(round(rate / per)))
+            .replace("{rate}", str(rate)).strip())
+
+
+def bulk_line(sf: dict, cfg: BotConfig) -> str | None:
+    """'50 sheet par bulk rate — Rs 180/sheet, approx Rs 30/piece', once they qualify."""
+    f = cfg.sales_flow
+    if sf.get("service") != "uvdtf":
+        return None
+    sheet = (sf.get("size") or "").upper()
+    tier = f.bulk_tier.get(sheet)
+    n = re.match(r"\d+", sf.get("pages") or "")
+    if not tier or not n or int(n.group()) < tier[0]:
+        return None
+    per = per_sheet(sf)
+    piece = f", yaani approx Rs {round(tier[1] / per)} per piece" if per else ""
+    return (f.bulk_text.replace("{pages}", n.group()).replace("{sheet}", sheet)
+            .replace("{rate}", str(tier[1])).replace("{piece}", piece).strip())
+
+
 def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
     """What we know, then a price only where there is a published one to give."""
     f = cfg.sales_flow
@@ -574,6 +689,11 @@ def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
     s = summary(sf)
     if s:
         parts.append(f.summary_intro.strip() + "\n" + s)
+    # Their question first ("ek sheet mein kitne aayenge?"), the rate card after — it was
+    # buried as the fifth paragraph of the reply that was supposed to answer it.
+    est = estimate_line(sf, cfg)
+    if est:
+        parts.append(est)
     # Only UV DTF has a rate card. Showing sheet rates for a t-shirt or a signage job
     # would be a number we cannot stand behind.
     body = f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip()
@@ -600,7 +720,10 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
 
     before = {s: sf.get(s) for s in SLOTS}
     asked = sf.get("asked")
+    had_estimate = per_sheet(sf) is not None
+    had_design_size = bool(sf.get("sticker_in"))
     absorb(sf, text, kind)
+    pages_auto = sf.pop("pages_auto", False)
 
     # Already quoted and nothing left to ask: the funnel is finished, let the normal
     # FAQ / fallback path own the conversation again.
@@ -659,7 +782,12 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         sf["needs_team"] = True
         return f.soft_close.strip(), False
 
-    pushing = asks_price(text)
+    # "zyada" is only a price complaint when it is about money — a rupee word, a number,
+    # or after they have already seen the rate. "thoda zyada hai bhai" right after a quote
+    # was ignored outright.
+    objection = bool(_words(text) & _OBJECTION_WORDS) and (
+        asks_price(text) or bool(sf.get("quoted")) or bool(re.search(r"\d", text or "")))
+    pushing = asks_price(text) or objection
     if pushing:
         sf["price_asks"] = int(sf.get("price_asks", 0)) + 1
 
@@ -669,7 +797,9 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     # for artwork is progress, and must not cost them the artwork question.
     filled_any = (any(sf.get(s) and not before.get(s) for s in SLOTS)
                   # The promised design file arriving is progress too, not a non-answer.
-                  or (before.get("design") == "customer" and sf.get("design") is True))
+                  or (before.get("design") == "customer" and sf.get("design") is True)
+                  # So is their design size, even though it is not a question we ask.
+                  or (not had_design_size and bool(sf.get("sticker_in"))))
     if asked and not sf.get(asked) and not pushing:
         tries = dict(sf.get("tries") or {})
         tries[asked] = tries.get(asked, 0) + 1
@@ -699,13 +829,15 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         if filled_any:
             slot = next_slot(sf, cfg) or slot
 
-    if slot is None or (pushing and sf["price_asks"] >= f.price_after_asks):
+    # Once the rate card has gone out it does not go out again on every later mention of
+    # price — that is a wall of text repeated, not an answer.
+    if slot is None or (pushing and sf["price_asks"] >= f.price_after_asks and not sf.get("quoted")):
         sf["quoted"] = True
         sf["asked"] = None
         reply = quote(sf, cfg, final=slot is None)
         # "bahut mehnga hai" that tips us into giving the rate is still a complaint;
         # answering it with a bare rate card skipped the one line a person would say.
-        if pushing and _words(text) & _OBJECTION_WORDS:
+        if objection:
             reply = f.objection_text.strip() + "\n\n" + reply
         if slot is not None:
             reply += "\n\n" + question(slot, sf, cfg)
@@ -722,7 +854,13 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         # before even a namaste — the reply read like a bot emptying its pockets.
         lines.append((f.ask_name_price if pushing else question("name", sf, cfg)).strip())
         return "\n\n".join(lines), False
+    # A complaint gets heard before anything else, and replaces the "samajh gayi" ack —
+    # "300 piece, samajh gayi. Samajh sakti hoon ji..." said the same thing twice.
+    if objection:
+        lines.append(f.objection_text.strip())
     for s in SLOTS:
+        if objection:
+            break
         upgraded = s == "design" and before.get(s) == "customer" and sf.get(s) is True
         if (sf.get(s) and not before.get(s)) or upgraded:
             # "Mug par? Haan, us par achha aata hai" — not "Smooth hard surface (glass,
@@ -732,15 +870,44 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             if said:
                 lines.append(said)
             break
+    # Every chat hears what HS does, once. Asking the service shows it as part of the
+    # question; when they named the service before we could ask, show it here and say
+    # back what they asked for instead of asking it again.
+    if slot == "service":
+        sf["intro_shown"] = True
+    elif not sf.get("intro_shown") and sf.get("service") and sf.get("name"):
+        sf["intro_shown"] = True
+        lines.append(f.company_intro.replace("{services}", service_menu()).strip())
+        if not (sf.get("service") and not before.get("service")):  # acked above if new
+            lines.append(f.service_known.replace(
+                "{service}", _SERVICE_LABEL.get(sf["service"], sf["service"])).strip())
+    # The moment we can work out how many fit on a sheet, say it, with the per-piece
+    # price — the question every customer is really asking.
+    if not had_estimate and per_sheet(sf) is not None:
+        est = estimate_line(sf, cfg)
+        if est:
+            lines.append(est)
+    if pages_auto:
+        qty_n = re.match(r"\d+", sf.get("qty") or "")
+        lines.append(f.pages_auto_text.replace("{qty}", qty_n.group() if qty_n else "")
+                     .replace("{pages}", re.match(r"\d+", sf["pages"]).group())
+                     .replace("{sheet}", (sf.get("size") or "").upper()).strip())
     # A real sales manager tells a customer about a better rate before they have to ask
     # for one. The volume breaks are on the published card, so suggesting them here is
     # not a made-up discount — it is the one they would get anyway, said a step early.
     if sf.get("pages") and not before.get("pages") and sf.get("service") == "uvdtf":
         n = re.match(r"\d+", sf["pages"])
-        if n:
-            is_a3 = (sf.get("size") or "").strip().upper() == "A3"
-            if int(n.group()) < (5 if is_a3 else 10):
-                lines.append((f.bulk_upsell_a3 if is_a3 else f.bulk_upsell).strip())
+        sheet = (sf.get("size") or "").strip().upper()
+        tier = f.bulk_tier.get(sheet)
+        if n and tier:
+            if int(n.group()) < tier[0]:
+                lines.append((f.bulk_upsell_a3 if sheet == "A3" else f.bulk_upsell).strip())
+            else:
+                # Already past the break: say so, with what it does to the per-piece
+                # price. Leaving them on the 1–5 sheet rate undersold our own offer.
+                bl = bulk_line(sf, cfg)
+                if bl:
+                    lines.append(bl)
     # A plain "no" to something ("photo abhi nahi hai", "nahi photo nahi") that filled
     # nothing used to get silence and the next question — a person says "koi baat nahi"
     # first. Said about the design, it also covers both things they might have meant.
@@ -752,8 +919,13 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     if not sf.get("quoted") and not sf.get("urgency_acked") and (_words(text) & _URGENCY_WORDS):
         sf["urgency_acked"] = True
         lines.append(f.urgency_ack.strip())
-    if pushing and not sf.get("quoted"):
-        objection = bool(_words(text) & _OBJECTION_WORDS)
-        lines.append((f.objection_text if objection else f.deflect_text).strip())
+    if objection:
+        # The answer to "zyada hai" is the best rate they actually qualify for, in rupees
+        # per piece — unless the volume-break line above already said it.
+        best = bulk_line(sf, cfg) or estimate_line(sf, cfg)
+        if best and best not in lines:
+            lines.append(best)
+    elif pushing:
+        lines.append((f.price_again if sf.get("quoted") else f.deflect_text).strip())
     lines.append(question(slot, sf, cfg))
     return "\n\n".join(lines), False

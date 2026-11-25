@@ -166,3 +166,27 @@ async def test_playground_menu_mode_with_buttons(api, menu_tenant):
     assert body["replies"][0]["payload"]["interactive"]["action"]["buttons"][0]["reply"]["id"] == "menu:products"
     r = await api.post(f"/admin/tenants/{menu_tenant.id}/playground", json={"button": {"id": "menu:products", "title": "Products"}, "session": "m1"}, headers=ADMIN)
     assert r.json()["replies"][0]["payload"]["interactive"]["type"] == "list"
+
+
+@pytest.fixture
+async def sales_tenant(tenant, db) -> Tenant:
+    t = await db.get(Tenant, tenant.id)
+    t.config = {**t.config, "reply_mode": "menu", "sales_flow": {"enabled": True}, "lead_alert": {"enabled": False}}
+    await db.commit()
+    return t
+
+
+async def test_sales_flow_never_falls_back_to_the_button_menu(api, sales_tenant):
+    """Found by chatting in the Playground: the funnel never sets the menu's "greeted"
+    flag, so the first message nothing matched got the old button menu."""
+    async def pg(msg):
+        r = await api.post(f"/admin/tenants/{sales_tenant.id}/playground", json={"message": msg, "session": "sf1"}, headers=ADMIN)
+        return r.json()["replies"]
+
+    for msg in ("hi", "Gurpreet", "uv dtf", "bottle", "design nahi hai", "A4", "300 piece", "10 sheet",
+                "Shop 4, Model Town, Ludhiana", "yahi", "UPI"):
+        await pg(msg)
+    for msg in ("theek hai thanks", "xqzv plok"):
+        replies = await pg(msg)
+        assert replies and all(r["kind"] == "text" for r in replies), replies
+        assert "bedsheet" not in replies[-1]["body"]

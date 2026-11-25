@@ -87,11 +87,19 @@ class SalesFlowConfig(BaseModel):
         "*A4 sheet* — 1 se 5 sheet Rs 200/sheet, 10+ sheet Rs 180/sheet\n"
         "*A3 sheet* — 1 se 5 sheet Rs 300/sheet, 5+ sheet Rs 280/sheet\n\n"
         "Aapke design ke size se ek sheet par kitne stickers aayenge, team layout bana kar exact bata degi — "
-        "usi hisaab se final rate."
+        "usi hisaab se final rate.\n\n"
+        "Payment 100% advance hota hai, +18% GST aur shipping charges extra lagte hain."
+    )
+    # Said after the summary, right before the closing line — dispatch speed and
+    # delivery reach, the same on every lane, so it is not tied to a published rate.
+    delivery_note: str = (
+        "Payment ke baad dispatch same day ya next day mein ho jaata hai, courier se delivery "
+        "approx 2-3 din lagti hai 🚚 Pan India delivery hoti hai, shipping charges extra lagenge — "
+        "jitni jaldi order confirm karenge utni jaldi dispatch hoga 👍"
     )
     # The closing line, kept apart from the rate so it is only said when there is
     # genuinely nothing left to ask.
-    quote_tail: str = "Team abhi aapse is number par baat karegi 👍"
+    quote_tail: str = "Order details hamari production/design team ko bhej di gayi hai 👍 Team abhi aapse is number par baat karegi."
     # Said when the last question gets answered after the rate already went out.
     closing_intro: str = "Bas ji, pura detail note ho gaya 🙏"
     # Said instead when the rate came out early because the customer pushed for it.
@@ -100,10 +108,9 @@ class SalesFlowConfig(BaseModel):
     # Shown when the customer has not picked a lane yet. {services} is filled from the
     # catalogue in app/sales_flow.py, so the menu never drifts from what is actually sold.
     ask_service: str = (
-        "Hum Jaipur mein apni factory se printing aur signage ka kaam karte hain \u2014 "
-        "machine se lekar finishing tak sab yahin hota hai, kuch bahar nahi jaata \U0001f44d\n\n"
+        "Hamare yaha sabhi tarah ka signage aur printing ka kaam hota hai, bulk order mein \U0001f44d\n\n"
         "Ye sab banate hain:\n{services}\n\n"
-        "Aapko inme se kya chahiye? Naam likh dijiye, main uski detail bata deti hoon."
+        "Aapko inme se kya chahiye?"
     )
     # {prompt} and {options} come from the chosen service's fork.
     ask_variant: str = "{prompt}\n{options}"
@@ -112,8 +119,13 @@ class SalesFlowConfig(BaseModel):
     ask_photo: str = "Us cheez ki ek photo bhej dijiye na 📷 Dekh kar main sahi size bata paungi, warna andaaza hi rahega."
     ask_design: str = "Ab apna design ya logo bhej dijiye. Vector file (AI, CDR, PDF, EPS) sabse achhi rehti hai, high-resolution PNG bhi chal jaayega. Design nahi hai to bhi koi baat nahi — bata dijiye, hamari team bana deti hai."
     ask_size: str = "{name} ji, print kitne size ka chahiye? Jaise 2 inch, 3x3 inch, ya A4 — size se hi rate banta hai."
+    # UV DTF only prints in two page sizes, so the question is a choice, not an open one.
+    ask_size_uvdtf: str = "Page size A4 chahiye ya A3? Hamare yaha inhi do size mein print hota hai, price bhi isi ke hisaab se hota hai."
     ask_qty: str = "Aur kitne piece ka soch rahe hain? Approx bhi chalega."
-    ask_city: str = "Aap kis city se hain? Courier aur timeline uske hisaab se bata paungi."
+    # Only asked for UV DTF — the rate card is per sheet, not per piece.
+    ask_pages: str = "Kitne sheet (page) print karwane hain? Jaise 5 sheet, 10 sheet."
+    ask_city: str = "Delivery ka full address bata dijiye (house/shop no, area, city) — courier isi par bhejenge."
+    ask_phone: str = "Aur ek contact number bata dijiye delivery ke liye — isi WhatsApp number par bhejna ho to 'yahi' likh dijiye."
     # Asked, not stated — the terms are the team's to set, the bot only learns the
     # customer's preference so the team is not starting from zero on the call.
     # Not a goodbye. One honest reason to stay, then a human who can actually offer a
@@ -127,8 +139,9 @@ class SalesFlowConfig(BaseModel):
     # UV DTF does not bond to fabric. Saying so plainly, and moving them to the lane
     # that can do it, keeps the lead instead of quoting the wrong process.
     fabric_redirect: str = (
-        "Ek baat bata doon ji — UV DTF sticker kapde par nahi chipakta, wo hard surface ke liye hai. "
-        "Kapde ke liye hamari DTF machine alag hai, aur wo wash mein bhi nikalta nahi. Usi hisaab se aage badhte hain 👍"
+        "Ek baat bata doon ji — UV DTF sticker cloth par nahi chipakta, wo plain ya hard surface ke liye hai. "
+        "Cloth/T-shirt ke liye hamari alag DTF machine hai, usmein design heat press se paste hota hai aur "
+        "wash mein bhi nahi nikalta. Usi hisaab se aage badhte hain 👍"
     )
     # Said when the customer calls it expensive, which is an objection, not a question.
     objection_text: str = (

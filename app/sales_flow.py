@@ -30,7 +30,7 @@ import re
 
 from app.bot_config import BotConfig
 
-SLOTS = ("name", "service", "variant", "photo", "design", "size", "qty", "city", "payment")
+SLOTS = ("name", "service", "variant", "photo", "design", "size", "qty", "pages", "city", "phone", "payment")
 
 # The lanes the factory sells. First match wins, and UV DTF goes first on purpose:
 # "DTF" alone means garment printing, but "UV DTF" means stickers, and stickers are the
@@ -51,8 +51,6 @@ SERVICES: list[tuple[str, str, set[str]]] = [
      {"vinyl", "wallpaper", "canvas", "oneway", "poster", "printing", "print"}),
     ("cnc", "CNC / laser cutting, wooden doors",
      {"cnc", "laser", "jali", "cutting", "door", "doors", "mdf", "engraving"}),
-    ("gifting", "Corporate gifting / name plates",
-     {"gift", "gifting", "hamper", "trophy", "memento", "nameplate", "plate", "diary"}),
     ("events", "Exhibition stall / event branding",
      {"exhibition", "stall", "event", "events", "canopy", "standee", "awning", "booth"}),
 ]
@@ -65,17 +63,17 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
     # the same job, and a cotton bag is a different process entirely. Asking by surface
     # is how the factory actually decides, and it catches the fabric mistake up front.
     # Item words stay in the keywords so "mug" still lands in the right bucket.
-    "uvdtf": ("UV DTF smooth aur hard surface par sabse achha baithta hai. Aapka item kaunsa hai?", [
+    "uvdtf": ("UV DTF sticker aajkal bahut trending hai — plain ya hard surface par sabse achha baithta hai. Aapka item kaunsa hai?", [
         ("smooth hard surface (glass, ceramic, steel, acrylic)",
          {"glass", "kaanch", "kanch", "ceramic", "mug", "mugs", "cup", "cups", "steel", "metal",
           "acrylic", "aluminium", "mirror", "tile", "plate", "trophy", "laptop", "helmet", "mobile"}),
-        ("curved item (bottle, sipper, jar)",
+        ("curved item (bottle, sipper, jar, tumbler)",
          {"bottle", "bottles", "sipper", "tumbler", "flask", "jar", "jars", "container", "pen", "dabba"}),
         ("packaging (kraft box, carton, pouch)",
          {"packaging", "box", "boxes", "carton", "kraft", "pouch", "packet", "packing", "chocolate"}),
         ("wood ya leather (diary, wooden box, wallet)",
          {"wood", "wooden", "mdf", "ply", "leather", "diary", "notebook", "planner", "frame"}),
-        ("kapda / fabric", {"kapda", "kapde", "kapra", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
+        ("cloth / fabric", {"kapda", "kapde", "kapra", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
     ]),
     "fabric": ("Kis garment par?", [
         ("t-shirt", {"tshirt", "tshirts", "shirt", "tee"}),
@@ -93,7 +91,6 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
         ("LED board", {"led", "glow", "light"}),
         ("neon", {"neon"}),
         ("backlit", {"backlit", "lollipop"}),
-        ("non-lit / ACP board", {"acp", "nonlit", "plain", "board"}),
         ("flex / banner", {"flex", "banner", "hoarding"}),
     ]),
     "print": ("Kis par print karwana hai?", [
@@ -156,6 +153,14 @@ _PAYMENT_LABEL = {
     "cash": "cash", "cod": "cash on delivery", "card": "card", "cheque": "cheque",
 }
 _PAYMENT_WORDS = set(_PAYMENT_LABEL)
+
+# A page/sheet count — only asked for UV DTF, which is priced per sheet rather than per
+# piece. Kept apart from qty (how many stickers) and size (A4 or A3).
+_PAGES_RE = re.compile(r"\b(\d{1,4})\s*(?:sheet|sheets|page|pages)?\b", re.I)
+
+# A 10-digit Indian mobile, with or without a leading +91 / 91 / 0.
+_PHONE_RE = re.compile(r"(?:\+?91[\s-]?|0)?\b([6-9]\d{9})\b")
+_SAME_NUMBER_WORDS = {"yahi", "yehi", "isi", "same", "yahin"}
 
 
 def _words(text: str) -> set[str]:
@@ -247,7 +252,7 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         if table:
             found = _match(words, table[1])
             label = found[0] if found else None
-            if label == "kapda / fabric":
+            if label == "cloth / fabric":
                 # Not a UV DTF job at all — move them to the lane that can actually do it
                 # rather than quoting sticker rates for a garment.
                 sf["service"] = "fabric"
@@ -272,6 +277,21 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
             if bare and not _SIZE_RE.search(text or ""):
                 sf["qty"] = bare.group(0).strip() + " piece"
 
+    if not sf.get("pages") and asked == "pages":
+        m = _PAGES_RE.search(text or "")
+        if m:
+            sf["pages"] = m.group(1).strip() + " sheet"
+
+    # A phone number is read whenever it is said, same as payment — people drop it in
+    # early ("order confirm karni hai, mera number 98293...") and re-asking it after
+    # that is the kind of thing that makes a bot obvious.
+    if not sf.get("phone"):
+        m = _PHONE_RE.search(text or "")
+        if m:
+            sf["phone"] = m.group(1)
+        elif asked == "phone" and words & _SAME_NUMBER_WORDS:
+            sf["phone"] = "same (WhatsApp number)"
+
     # Taken whenever it is said, not only when asked. People answer the payment question
     # three messages early, and re-asking something they already told us is the single
     # most bot-like thing this flow can do.
@@ -292,21 +312,31 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
     if not sf.get("name") and asked == "name":
         cleaned = re.sub(r"\b(mera|naam|name|hai|is|ji|my)\b", " ", (text or "").lower()).strip(" .,-")
         cleaned = " ".join(cleaned.split())
-        looks_like_product = bool(_words(cleaned) & _PRODUCT_WORDS)
-        if (cleaned and len(cleaned.split()) <= 4 and len(cleaned) <= 40
-                and not (_words(cleaned) & _NOT_A_NAME)
-                and not looks_like_product and not asks_price(cleaned)
-                and not _SIZE_RE.search(cleaned) and not _QTY_RE.search(cleaned)):
-            sf["name"] = cleaned.title()
+        if cleaned and len(cleaned) <= 60:
+            # "tajinder jaipur se" -> just "tajinder". People introduce themselves with
+            # their city or a sentence around it; a first-name basis is how this chat is
+            # meant to read, and it is what the human agent's own script says to do
+            # ("first letter only"). The guards run on this one word, not the whole
+            # reply, so trailing context never blocks a real name from landing.
+            first = cleaned.split()[0]
+            if (2 <= len(first) <= 20 and first.isalpha()
+                    and first not in _NOT_A_NAME
+                    and not (_words(first) & _PRODUCT_WORDS)
+                    and not asks_price(first)):
+                sf["name"] = first.title()
 
 
-def _skip(slot: str, cfg: BotConfig) -> bool:
+def _skip(slot: str, cfg: BotConfig, sf: dict | None = None) -> bool:
     f = cfg.sales_flow
     if slot == "photo" and not f.want_photo:
         return True
     if slot == "design" and not f.want_design:
         return True
     if slot == "name" and not f.want_name:
+        return True
+    # "No. of sheets" only means something for UV DTF, which is priced per sheet. Every
+    # other lane is quoted by the team, so the question has no answer worth having there.
+    if slot == "pages" and (sf or {}).get("service") != "uvdtf":
         return True
     return False
 
@@ -316,7 +346,7 @@ def next_slot(sf: dict, cfg: BotConfig) -> str | None:
         return None
     given_up = set(sf.get("skipped") or [])
     for slot in SLOTS:
-        if slot in given_up or _skip(slot, cfg):
+        if slot in given_up or _skip(slot, cfg, sf):
             continue
         # Nothing to fork on until a service is chosen, and some lanes have no fork.
         if slot == "variant" and (not sf.get("service") or sf["service"] not in VARIANTS):
@@ -337,7 +367,9 @@ _RETRY: dict[str, str] = {
     "design": "Design ya logo bhej dijiyega, phir layout bana ke dikha deti hoon.",
     "size": "Size ka andaaza bhi chalega — kitne inch ka chahiye?",
     "qty": "Approx kitne piece? Bas moti si ginti bata dijiye.",
-    "city": "City bata dijiye, courier uske hisaab se dekh lungi.",
+    "pages": "Kitne sheet chahiye, bas andaza bata dijiye.",
+    "city": "Delivery address bata dijiye, courier usi par bhej denge.",
+    "phone": "Contact number bata dijiye, delivery confirm karne ke kaam aayega.",
     "name": "Naam bata dijiye na, baat karne mein aasani rahegi 🙂",
     "payment": "Payment ka mode bata dijiye — UPI, bank ya cash?",
 }
@@ -355,7 +387,12 @@ def question(slot: str, sf: dict, cfg: BotConfig) -> str:
             prompt, options = table
             opts = "\n".join("\u2022 " + label for label, _ in options)
             return f.ask_variant.replace("{prompt}", prompt).replace("{options}", opts)
-    text = getattr(f, f"ask_{slot}")
+    # UV DTF is priced by page size (A4/A3), not by inches \u2014 the generic size question
+    # would ask for something nobody there can answer.
+    if slot == "size" and sf.get("service") == "uvdtf":
+        text = f.ask_size_uvdtf
+    else:
+        text = getattr(f, f"ask_{slot}")
     first = (sf.get("name") or "").split(" ")[0]
     return text.replace("{name}", first) if first else text.replace("{name} ", "").replace("{name}", "")
 
@@ -418,7 +455,9 @@ def summary(sf: dict) -> str:
         ("Item", _item_line(sf)),
         ("Size", sf.get("size")),
         ("Quantity", sf.get("qty")),
-        ("City", sf.get("city")),
+        ("Pages", sf.get("pages")),
+        ("Address", sf.get("city")),
+        ("Contact", sf.get("phone")),
         ("Payment", sf.get("payment")),
         ("Design", {"team": "team banayegi", True: "mil gaya"}.get(sf.get("design"))),
     ]
@@ -449,6 +488,7 @@ def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
     if trimmed and trimmed[-1].isalnum():
         trimmed += "."
     parts.append(trimmed or body)
+    parts.append(f.delivery_note.strip())
     # Saying "team abhi call karegi" and then asking another question in the same breath
     # is the contradiction that gives a bot away. When the rate came out early because
     # they pushed for it, the close waits until the questions are actually done.
@@ -533,7 +573,7 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     # re-asking something the customer already told us is what gives a bot away.
     if slot and asked and not filled_any and not pushing:
         for cand in SLOTS:
-            if cand == asked or sf.get(cand) or _skip(cand, cfg):
+            if cand == asked or sf.get(cand) or _skip(cand, cfg, sf):
                 continue
             _take(sf, cand, text)
             if sf.get(cand):

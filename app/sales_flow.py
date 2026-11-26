@@ -156,6 +156,9 @@ _SOCIAL_WORDS = {
     "ok", "okay", "k", "theek", "thik", "acha", "accha", "great", "nice", "super", "cool",
     "badhiya", "perfect", "done", "hi", "hello", "hey", "namaste", "ji", "bye", "byee",
 }
+# A greeting means "I'm back", not "thanks" — a completed order is not the end of the
+# relationship, and a plain "hi" days later almost always means another one is wanted.
+_GREETING_WORDS = {"hi", "hii", "hiii", "hello", "helo", "hey", "namaste", "namaskar"}
 
 # Someone stepping back. Pushing the next question at them is how a bot loses a lead
 # that a person would have kept warm.
@@ -317,6 +320,12 @@ def _is_social(text: str) -> bool:
     "hi" — and has no slot-answer or question buried in it."""
     w = _words(text)
     return bool(w & _SOCIAL_WORDS) and not (w - _SOCIAL_WORDS - _FILLER_WORDS)
+
+
+def _is_greeting(text: str) -> bool:
+    """True for a plain "hi"/"hello"/"namaste" — nothing else in the message."""
+    w = _words(text)
+    return bool(w & _GREETING_WORDS) and not (w - _GREETING_WORDS - _FILLER_WORDS)
 
 
 def load(state: dict) -> dict:
@@ -878,6 +887,13 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             if any(sf.get(s_) and not before.get(s_) for s_ in SLOTS):
                 return (f.closing_intro.strip() + "\n" + summary(sf)
                         + "\n\n" + f.quote_tail.strip()), True
+        # A fresh greeting means they are back for another order, not asking about the
+        # last one — "hi" is also a social word, and without this check it got stuck
+        # answering every future "hi" with "koi aur sawaal ho?" forever.
+        if _is_greeting(text):
+            sf.clear()
+            sf["price_asks"] = 0
+            return advance(sf, text, kind, cfg)
         # The deal is done and this message answered nothing new — but a bare "thanks"
         # or "ok" still gets a human reply instead of silence.
         if _is_social(text):
@@ -892,6 +908,10 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     # paused, and without this that reads as "nothing left to ask" and fires a quote at
     # the customer who just said not now.
     if sf.get("paused"):
+        if _is_greeting(text):
+            sf.clear()
+            sf["price_asks"] = 0
+            return advance(sf, text, kind, cfg)
         if _is_social(text):
             return f.social_reply.strip(), False
         if kind in _MEDIA_KINDS:

@@ -282,3 +282,26 @@ def test_dimension_like_reply_is_never_read_as_the_address():
     assert sf["sticker_in"] == [2.0, 2.0]
     assert "15 piece" in replies[-1]  # the estimate still fires
     assert "address" in replies[-1].lower()  # and the address question is asked again
+
+
+def test_greeting_restarts_the_funnel_after_a_completed_order():
+    """Found live: once an order was quoted and closed, every later "hi" got stuck
+    answering "koi aur sawaal ho?" forever — there was no way back into the funnel for
+    a repeat customer. A plain greeting now starts clean instead."""
+    sf = sales_flow.load({})
+    for m in ("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "4 piece", "2 sheet",
+              "Shop 9 Jaipur, 9829011122", "UPI"):
+        sales_flow.advance(sf, m, "text", CFG)
+    assert sf.get("quoted") and sales_flow.next_slot(sf, CFG) is None
+    reply, _ = sales_flow.advance(sf, "thanks", "text", CFG)
+    assert reply.startswith("Bilkul ji")  # still a plain social reply, not a restart
+    assert sf.get("closed")
+    reply, _ = sales_flow.advance(sf, "hi", "text", CFG)
+    assert "naam" in reply.lower() and not reply.startswith("Bilkul ji")
+    assert sf.get("name") is None and not sf.get("closed")
+
+
+def test_greeting_restarts_the_funnel_after_backing_off():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "abhi nahi, sochta hoon", "ok", "hi")
+    assert "naam" in replies[-1].lower()
+    assert not sf.get("paused")

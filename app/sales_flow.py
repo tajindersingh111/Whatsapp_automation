@@ -111,11 +111,11 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
         ("curved item (bottle, tumbler, sipper, jar, mug)",
          {"bottle", "bottles", "sipper", "tumbler", "flask", "jar", "jars", "container", "pen",
           "dabba", "mug", "mugs", "curved", "gol"}),
-        ("cloth / fabric", {"kapda", "kapde", "kapra", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
+        ("cloth / fabric", {"fabric","fabric", "fabric", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
     ]),
     # The script, for cloth: "Aapko T-shirt par banwana hai? Usme aapko heat press se
     # paste karna hoga." The heat-press line goes in fabric_redirect.
-    "fabric": ("Aapko T-shirt par banwana hai ya kisi aur kapde par?", [
+    "fabric": ("Aapko T-shirt par banwana hai ya kisi aur fabric par?", [
         ("t-shirt", {"tshirt", "tshirts", "shirt", "tee"}),
         ("hoodie / sweatshirt", {"hoodie", "sweatshirt", "jacket"}),
         ("cap", {"cap", "caps", "hat"}),
@@ -158,7 +158,7 @@ _SOCIAL_WORDS = {
 }
 # A greeting means "I'm back", not "thanks" — a completed order is not the end of the
 # relationship, and a plain "hi" days later almost always means another one is wanted.
-_GREETING_WORDS = {"hi", "hii", "hiii", "hello", "helo", "hey", "namaste", "namaskar"}
+_GREETING_WORDS = {"hi", "hii", "hiii", "hello", "helo", "hey", "namaste", "namaskar", "hy", "hello",}
 
 # Someone stepping back. Pushing the next question at them is how a bot loses a lead
 # that a person would have kept warm.

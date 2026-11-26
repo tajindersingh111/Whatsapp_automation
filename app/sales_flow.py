@@ -54,6 +54,17 @@ SERVICES: list[tuple[str, str, set[str]]] = [
     ("flex", "Flex Printing", {"flex", "banner", "hoarding"}),
 ]
 _SERVICE_LABEL = {k: label for k, label, _ in SERVICES}
+
+
+def service_label(sf: dict) -> str | None:
+    """What to call this enquiry in a message to the customer — the chosen service, or
+    the item they named if they got that far, else None if they never said either."""
+    key = sf.get("service")
+    if not key:
+        return None
+    label = _SERVICE_LABEL.get(key, key)
+    item = sf.get("item_said")
+    return f"{label} ({item})" if item else label
 _SERVICE_WORDS = {w for _k, _l, keys in SERVICES for w in keys} | {"uv"}
 _SERVICE_KEYS = {k: keys for k, _l, keys in SERVICES}
 # Matching order is not display order. UV DTF goes first on purpose: it is the product
@@ -87,7 +98,7 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
     # sabse achha hota hai. Aapko kispe paste karna hai?" with curved items (tumbler) and
     # cloth as the two things to tell apart. Box, diary, glass and the like are all plain
     # hard surfaces as far as printing goes, so their words live in that bucket.
-    "uvdtf": ("UV DTF sticker aajkal bahut trending hai \U0001f44d Ye plain ya hard surface par sabse achha hota hai.\n\nAapko kispe paste karna hai?", [
+    "uvdtf": ("UV DTF aajkal bahut trending mein hai \U0001f44d Ye plain ya hard surface par sabse achha hota hai.\n\nAapko kispe paste karna hai?", [
         ("plain / hard surface (glass, steel, acrylic, box, diary)",
          {"glass", "kaanch", "kanch", "ceramic", "cup", "cups", "steel", "metal", "acrylic",
           "aluminium", "mirror", "tile", "plate", "trophy", "laptop", "helmet", "mobile",
@@ -186,14 +197,25 @@ _SIZE_RE = re.compile(
 _SHEET_RE = re.compile(r"\bA[34]\b", re.I)
 _SHEET_IN = {"A4": (8.27, 11.69), "A3": (11.69, 16.54)}
 _DIM_RE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*(?:x|\*|by|×)\s*(\d+(?:\.\d+)?)\s*(inch|inches|in|cm|mm)\b"
-    r"|(\d+(?:\.\d+)?)\s*(inch|inches|cm|mm)\b",
+    r'(\d+(?:\.\d+)?)\s*(?:x|\*|by|×)\s*(\d+(?:\.\d+)?)\s*(inch|inches|in|cm|mm|")?'
+    r'|(\d+(?:\.\d+)?)\s*(inch|inches|cm|mm|")',
     re.I,
 )
-_TO_INCH = {"inch": 1.0, "inches": 1.0, "in": 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4}
-# Breathing room for cutting: a margin round the sheet and a gap between pieces.
+_TO_INCH = {"inch": 1.0, "inches": 1.0, "in": 1.0, '"': 1.0, "cm": 1 / 2.54, "mm": 1 / 25.4}
+# Breathing room for cutting: a margin round the sheet and a gap between pieces. Only
+# used as a fallback when the size does not match a yield the factory has actually run —
+# see _KNOWN_YIELD below, which is real counts, not a geometry guess.
 _SHEET_MARGIN_IN = 0.4
 _PIECE_GAP_IN = 0.2
+
+# Actual pieces per sheet, from the factory's own production — not calculated, measured.
+# Keyed by (sheet, sorted(width, height)) so "2x3" and "3x2" hit the same entry.
+_KNOWN_YIELD: dict[tuple[str, float, float], int] = {
+    ("A3", 1.5, 1.5): 54, ("A4", 1.5, 1.5): 30,
+    ("A3", 2.0, 2.0): 35, ("A4", 2.0, 2.0): 15,
+    ("A3", 2.5, 2.5): 24, ("A4", 2.5, 2.5): 12,
+    ("A3", 2.0, 3.0): 25, ("A4", 2.0, 3.0): 9,
+}
 
 
 def _dims_inches(text: str | None) -> tuple[float, float] | None:
@@ -201,8 +223,8 @@ def _dims_inches(text: str | None) -> tuple[float, float] | None:
     if not m:
         return None
     if m.group(1):
-        k = _TO_INCH[m.group(3).lower()]
-        return float(m.group(1)) * k, float(m.group(2)) * k
+        unit = (m.group(3) or "inch").lower()
+        return float(m.group(1)) * _TO_INCH[unit], float(m.group(2)) * _TO_INCH[unit]
     k = _TO_INCH[m.group(5).lower()]
     side = float(m.group(4)) * k
     return side, side  # "3 inch ka logo" — about that big each way
@@ -214,12 +236,19 @@ def _dims_label(text: str | None) -> str | None:
 
 
 def per_sheet(sf: dict) -> int | None:
-    """Roughly how many of their design fit on the chosen sheet, either way round."""
-    sheet = _SHEET_IN.get((sf.get("size") or "").upper())
+    """How many of their design fit on the chosen sheet. A size the factory has actually
+    run (_KNOWN_YIELD) wins over the geometric guess below it, every time."""
+    sheet_key = (sf.get("size") or "").upper()
     dims = sf.get("sticker_in")
-    if not sheet or not dims:
+    if not dims:
         return None
-    w, h = dims
+    w, h = sorted(round(d, 2) for d in dims)
+    known = _KNOWN_YIELD.get((sheet_key, w, h))
+    if known is not None:
+        return known
+    sheet = _SHEET_IN.get(sheet_key)
+    if not sheet:
+        return None
     W, H = sheet[0] - _SHEET_MARGIN_IN, sheet[1] - _SHEET_MARGIN_IN
     fit = lambda a, b: int(W // (a + _PIECE_GAP_IN)) * int(H // (b + _PIECE_GAP_IN))
     return max(fit(w, h), fit(h, w))

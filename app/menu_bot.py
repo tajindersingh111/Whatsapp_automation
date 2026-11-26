@@ -395,6 +395,16 @@ async def run_menu_bot(session: AsyncSession, *, tenant: Tenant, cfg: BotConfig,
 
 def menu_followup(cfg: BotConfig, contact: Contact, conv: Conversation, product: Product | None) -> dict:
     first = (contact.name or "").split(" ")[0] or "ji"
+    if cfg.sales_flow.enabled:
+        # The funnel has no catalog product to remind them about — "{product} dekha tha"
+        # made no sense here, and the buttons this was sending are gone from every other
+        # reply in this mode. Say what they were actually asking about, as plain text.
+        sf = (conv.state or {}).get("sf") or {}
+        service = sales_flow.service_label(sf)
+        f = cfg.sales_flow
+        text = (f.followup_with_service if service else f.followup_no_service)
+        text = text.replace("{name}", first).replace("{service}", service or "")
+        return text_message(text)
     text = cfg.menu.followup_text
     try:
         text = text.format(name=first, product=product.title if product else "hamare products", brand=cfg.brand_name, hours=cfg.support_hours)

@@ -212,6 +212,11 @@ class SalesFlowConfig(BaseModel):
         "hamari team aapko exact quote bhejegi."
     )
 
+    # Sent once, a few hours after a customer goes quiet mid-funnel (lead_followup).
+    # Plain text, no buttons — the funnel never shows any, and this is still that chat.
+    followup_with_service: str = "Hi {name} 🙏 Aap {service} ke liye enquiry kar rahe the. Agar abhi bhi chahiye ho to bas apna design/requirement bata dijiye, main turant aage badha deti hoon."
+    followup_no_service: str = "Hi {name} 🙏 Kuch poochna tha kya? Bata dijiye, main yahin hoon."
+
 
 class MenuConfig(BaseModel):
     """Texts for the menu bot (no AI). {name}, {brand}, {hours}, {product} are filled in."""

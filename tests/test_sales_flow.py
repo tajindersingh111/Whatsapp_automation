@@ -196,3 +196,47 @@ def test_name_address_and_mobile_in_one_message():
 def test_below_minimum_sheets_is_booked_at_the_minimum():
     sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "100 piece", "2 sheet")
     assert sf["pages"] == "5 sheet (minimum)" and "Minimum order 5 sheet" in replies[-1]
+
+
+def test_followup_names_the_service_not_a_catalog_product():
+    """A customer who goes quiet mid-funnel gets reminded about what they actually
+    asked for, as plain text — not "{product} dekha tha" (there is no catalog product)
+    and never with buttons, which nothing else in this mode shows."""
+    from types import SimpleNamespace
+
+    from app.menu_bot import menu_followup
+
+    contact = SimpleNamespace(name="Ravi Kumar")
+    sf, _ = chat("hi", "Ravi Kumar", "uv dtf", "bottle")
+    conv = SimpleNamespace(state={"sf": sf})
+    msg = menu_followup(CFG, contact, conv, None)
+    assert msg["type"] == "text"
+    assert "UV DTF Sticker" in msg["text"]["body"] and "bottle" in msg["text"]["body"]
+
+    conv_fresh = SimpleNamespace(state={"sf": sales_flow.load({})})
+    msg2 = menu_followup(CFG, contact, conv_fresh, None)
+    assert msg2["type"] == "text" and "{service}" not in msg2["text"]["body"]
+
+
+def test_real_production_yields_override_the_geometric_guess():
+    """These eight sizes are the factory's own measured counts, not a layout guess —
+    they must win over per_sheet()'s geometry fallback."""
+    known = [
+        ("A3", "1.5x1.5 inch", 54), ("A4", "1.5x1.5 inch", 30),
+        ("A3", "2x2 inch", 35), ("A4", "2x2 inch", 15),
+        ("A3", "2.5x2.5 inch", 24), ("A4", "2.5x2.5 inch", 12),
+        ("A3", "3x2 inch", 25), ("A4", "3x2 inch", 9),
+    ]
+    for sheet, size_text, expected in known:
+        sf = {"service": "uvdtf", "size": sheet, "sticker_in": list(sales_flow._dims_inches(size_text))}
+        assert sales_flow.per_sheet(sf) == expected, (sheet, size_text)
+    # Orientation and the rate card's own "2"x2"" notation hit the same entry.
+    assert sales_flow.per_sheet({"service": "uvdtf", "size": "A3", "sticker_in": [2.0, 3.0]}) == 25
+    assert sales_flow.per_sheet({"service": "uvdtf", "size": "A4",
+                                 "sticker_in": list(sales_flow._dims_inches('2"x2"'))}) == 15
+
+
+def test_every_per_piece_line_says_approx():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "box", "design nahi hai", "A3", "2.5x2.5 inch")
+    assert "24 piece" in replies[-1]
+    assert "lagbhag" in replies[-1] and "approx" in replies[-1]

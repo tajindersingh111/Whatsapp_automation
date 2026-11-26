@@ -111,7 +111,7 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
         ("curved item (bottle, tumbler, sipper, jar, mug)",
          {"bottle", "bottles", "sipper", "tumbler", "flask", "jar", "jars", "container", "pen",
           "dabba", "mug", "mugs", "curved", "gol"}),
-        ("cloth / fabric", {"fabric","fabric", "fabric", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
+        ("fabric", {"kapda", "kapde", "kapra", "cloth", "fabric", "tshirt", "cotton", "bag", "cap"}),
     ]),
     # The script, for cloth: "Aapko T-shirt par banwana hai? Usme aapko heat press se
     # paste karna hoga." The heat-press line goes in fabric_redirect.
@@ -158,7 +158,7 @@ _SOCIAL_WORDS = {
 }
 # A greeting means "I'm back", not "thanks" — a completed order is not the end of the
 # relationship, and a plain "hi" days later almost always means another one is wanted.
-_GREETING_WORDS = {"hi", "hii", "hiii", "hello", "helo", "hey", "namaste", "namaskar", "hy", "hello",}
+_GREETING_WORDS = {"hi", "hii", "hiii", "hy", "hello", "helo", "hey", "namaste", "namaskar"}
 
 # Someone stepping back. Pushing the next question at them is how a bot loses a lead
 # that a person would have kept warm.
@@ -343,7 +343,7 @@ def save(state: dict, sf: dict) -> None:
 # names both, the shape buckets win over the material one. Matching order only — the
 # options are still shown to the customer in the order the table lists them.
 _MATCH_ORDER = {
-    "uvdtf": ("curved item", "cloth / fabric", "plain / hard surface"),
+    "uvdtf": ("curved item", "fabric", "plain / hard surface"),
 }
 
 
@@ -454,7 +454,7 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         if table:
             found = _match(words, table[1], sf["service"])
             label = found[0] if found else None
-            if label == "cloth / fabric":
+            if label == "fabric":
                 # Not a UV DTF job at all — move them to the lane that can actually do it
                 # rather than quoting sticker rates for a garment.
                 sf["service"] = "fabric"

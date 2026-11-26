@@ -83,13 +83,14 @@ class SalesFlowConfig(BaseModel):
     deflect_text: str = "Pricing design ke size aur quantity par depend karti hai 👍 Aap size ya approximate requirement aur quantity bata dijiye, main aapko best available pricing share kar deti hoon."
     summary_intro: str = "Perfect 🙏 Ye sab note kar liya maine:"
     price_text: str = (
-        "Rate ye rahe 👇\n"
-        "*A4 sheet* — 1 se 5 sheet Rs 200/sheet, 10+ sheet Rs 180/sheet\n"
-        "*A3 sheet* — 1 se 5 sheet Rs 300/sheet, 5+ sheet Rs 280/sheet\n"
-        "Minimum order 5 sheet ka hai.\n\n"
+        "Rate ye rahe 👇 (GST included)\n"
+        "*A4 sheet* — 5+ sheet Rs 180/sheet, 5 se kam par Rs 295/sheet\n"
+        "*A3 sheet* — 5+ sheet Rs 350/sheet, 5 se kam par Rs 400/sheet\n"
+        "10+ sheet lene par rate aur bhi kam ho jaata hai.\n"
+        "Minimum order 5 sheet ka hai — usse kam bhi ban jaata hai, thoda zyada rate par.\n\n"
         "Aapke design ke size se ek sheet par kitne stickers aayenge, team layout bana kar exact bata degi — "
         "usi hisaab se final rate.\n\n"
-        "Payment 100% advance hota hai, +18% GST aur shipping charges extra lagte hain."
+        "Payment 100% advance hota hai, shipping charges extra lagte hain."
     )
     # Said after the summary, right before the closing line — dispatch speed and
     # delivery reach, the same on every lane, so it is not tied to a published rate.
@@ -101,29 +102,23 @@ class SalesFlowConfig(BaseModel):
     # The closing line, kept apart from the rate so it is only said when there is
     # genuinely nothing left to ask.
     quote_tail: str = "Order details hamari production/design team ko bhej di gayi hai 👍 Team bahut jaldi aapko is number par contact karke order finalize karegi."
-    # Starting rate per sheet, for the per-piece estimate. Keep in step with price_text.
-    sheet_rate: dict[str, int] = Field(default_factory=lambda: {"A4": 200, "A3": 300})
+    # Per sheet, GST included: [below the minimum order, at/above it]. A smaller order
+    # still gets made, just not at the volume rate. Keep in step with price_text.
+    sheet_rate: dict[str, list[int]] = Field(default_factory=lambda: {"A4": [295, 180], "A3": [400, 350]})
     # {size} their design, {sheet} A4/A3, {n} pieces per sheet, {per_piece} Rs, {rate} Rs/sheet.
-    estimate_text: str = "Aapka {size} ka design ek {sheet} sheet par lagbhag {n} piece aayega — yaani approx Rs {per_piece} per piece (Rs {rate}/sheet ke hisaab se) 👍"
+    estimate_text: str = "Aapka {size} ka design ek {sheet} sheet par lagbhag {n} piece aayega — yaani approx Rs {per_piece} per piece (Rs {rate}/sheet ke hisaab se, GST included) 👍"
     estimate_too_big: str = "{size} ka design {sheet} sheet se bada pad raha hai — team aapko sahi sheet/layout suggest karegi."
-    # Volume break per sheet size: [from this many sheets, rate per sheet]. Keep in step
-    # with price_text.
-    bulk_tier: dict[str, list[int]] = Field(default_factory=lambda: {"A4": [10, 180], "A3": [5, 280]})
-    # {pages} their sheet count, {sheet} A4/A3, {rate} bulk Rs/sheet, {piece} per-piece clause.
-    bulk_text: str = "{pages} sheet par aapko bulk rate milega — Rs {rate}/sheet{piece} 👍"
+    # "Minimum order — 5 sheet." Below it, a smaller order is still offered, at the
+    # higher rate, with the lower one named as the reason to round up.
+    min_sheets: int = 5
+    # {count} their sheets, {sheet} A4/A3, {below} and {at_min} the two rates, {min} 5.
+    below_min_text: str = "Theek hai, {count} {sheet} sheet bhi ban jayegi, lekin price thoda zyada hoga — Rs {below}/sheet. {min} sheet banwa lijiye to Rs {at_min}/sheet ka rate milega, kaafi kam padega 👍"
+    # Said once past 10 sheets — a real further discount, with no fixed number to quote.
+    above_ten_text: str = "10+ sheet lene par rate aur bhi kam ho jaata hai — team exact rate confirm kar degi 👍"
     # A plain price question after the rate card already went out.
     price_again: str = "Rate maine upar bhej diya hai 👆 Koi confusion ho to team call par sab samjha degi."
-    # "Minimum order — 5 sheet." Below it, say so and work it out at the minimum.
-    min_sheets: int = 5
-    min_order_text: str = "Minimum order {min} sheet ka hota hai 👍"
-    # Added when we know how many fit: {min}, {sheet} A4/A3, {pieces} total at the minimum.
-    min_order_pieces: str = "{min} {sheet} sheet mein aapke lagbhag {pieces} piece ban jayenge."
     # Sheets worked out from quantity and design size, instead of asking.
     pages_auto_text: str = "{qty} piece ke liye lagbhag {pages} {sheet} sheet lagengi 👍"
-    # Said right after a low sheet count, before the customer has to ask for a better
-    # rate — the volume break is already on the card, not a discount invented on the spot.
-    bulk_upsell: str = "Ek baat bata doon — 10+ sheet A4 lene par rate Rs 180/sheet ho jaata hai (abhi Rs 200/sheet hai), kaafi bachat ho jaati hai 👍 Chahen to quantity thodi badha sakte hain."
-    bulk_upsell_a3: str = "Ek baat bata doon — 5+ sheet A3 lene par rate Rs 280/sheet ho jaata hai (abhi Rs 300/sheet hai) 👍 Chahen to quantity thodi badha sakte hain."
     # A bare "thanks"/"ok"/"hi" once the deal is done, or after a soft close. Falling
     # through to "samajh nahi aaya" right after closing a sale is what makes a bot
     # obvious; this keeps the door open instead.

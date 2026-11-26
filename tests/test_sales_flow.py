@@ -105,9 +105,10 @@ def test_uv_dtf_size_retry_is_a4_or_a3_not_inches():
     assert "inch" not in replies[-1] and "A4" in replies[-1]
 
 
-def test_low_sheet_count_gets_the_volume_break():
-    _, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "200 piece", "3 sheet")
-    assert "10+ sheet" in replies[-1]
+def test_low_sheet_count_offers_the_real_tradeoff_not_a_fake_discount():
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "200 piece", "3 sheet")
+    assert sf["pages"] == "3 sheet"  # never force-bumped — their order, at the real rate
+    assert "Rs 295/sheet" in replies[-1] and "Rs 180/sheet" in replies[-1]
 
 
 def test_objection_that_triggers_the_rate_is_answered_first():
@@ -117,14 +118,15 @@ def test_objection_that_triggers_the_rate_is_answered_first():
 
 def test_design_size_gives_per_piece_price_and_sheet_count():
     sf, replies = chat("hi", "Ravi", "uv dtf", "jar", "design nahi hai", "A4", "2x2 inch")
-    assert "15 piece" in replies[-1] and "Rs 13 per piece" in replies[-1]
+    # The sheet count is not known yet, so this uses the headline (at-minimum) rate.
+    assert "15 piece" in replies[-1] and "Rs 12 per piece" in replies[-1]
     assert sf["size"] == "A4"  # the design size never overwrites the sheet
     sf, replies = chat("hi", "Ravi", "uv dtf", "jar", "design nahi hai", "A4", "2x2 inch", "40 piece")
-    # 40 pieces need 3 sheets, under the 5-sheet minimum: booked at the minimum, and
-    # the customer told what the minimum gets them.
-    assert sf["pages"] == "5 sheet (minimum)"
-    assert "Minimum order 5 sheet" in replies[-1] and "lagbhag 75 piece" in replies[-1]
-    assert "10+ sheet" in replies[-1]  # 5 sheets is still under the volume break
+    # 40 pieces need 3 sheets — under the 5-sheet minimum, so it stays their own number,
+    # offered at the real (higher) rate rather than silently bumped to 5.
+    assert sf["pages"] == "3 sheet (approx)"
+    assert "lagbhag 3 A4 sheet" in replies[-1]
+    assert "Rs 295/sheet" in replies[-1] and "Rs 180/sheet" in replies[-1]
 
 
 def test_estimate_answers_the_question_before_the_rate_card():
@@ -138,11 +140,12 @@ GURPREET = ("Hello, UV DTF sticker ka rate kya hai?", "Gurpreet, Ludhiana se",
             "A4 lunga. ek sheet mein kitne logo aayenge? logo 3 inch ka hai")
 
 
-def test_objection_after_the_quote_is_answered_with_the_bulk_rate():
+def test_objection_after_the_quote_is_answered_with_the_real_rate():
     sf, replies = chat(*GURPREET, "33 rupay ek logo? thoda zyada hai bhai. 300 piece chahiye")
     r = replies[-1]
     assert r.startswith("Samajh sakti hoon")
     assert "50 A4 sheet" in r and "Rs 180/sheet" in r and "Rs 30 per piece" in r
+    assert "10+ sheet" in r  # a real further discount, worth mentioning
     assert "Rate ye rahe" not in r  # the rate card is not sent a second time
 
 
@@ -193,9 +196,27 @@ def test_name_address_and_mobile_in_one_message():
     assert "UPI" in replies[-1] and "cash" not in replies[-1]  # prepaid only
 
 
-def test_below_minimum_sheets_is_booked_at_the_minimum():
+def test_below_minimum_sheets_stays_what_they_asked_for():
+    """A below-minimum order is offered at the real (higher) rate, not silently bumped —
+    the business will make 2 sheets, just not at the 5-sheet price."""
     sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "100 piece", "2 sheet")
-    assert sf["pages"] == "5 sheet (minimum)" and "Minimum order 5 sheet" in replies[-1]
+    assert sf["pages"] == "2 sheet"
+    assert "2 A4 sheet bhi ban jayegi" in replies[-1]
+    assert "Rs 295/sheet" in replies[-1] and "Rs 180/sheet" in replies[-1]
+
+
+def test_rate_for_below_and_at_minimum():
+    assert sales_flow.rate_for({"service": "uvdtf", "size": "A4"}, CFG, pages=2) == 295
+    assert sales_flow.rate_for({"service": "uvdtf", "size": "A4"}, CFG, pages=5) == 180
+    assert sales_flow.rate_for({"service": "uvdtf", "size": "A3"}, CFG, pages=4) == 400
+    assert sales_flow.rate_for({"service": "uvdtf", "size": "A3"}, CFG, pages=5) == 350
+
+
+def test_price_card_has_no_bare_gst_line_since_rates_include_it():
+    _, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "rate kitna hai", "rate kitna hai")
+    r = replies[-1]
+    assert "GST included" in r
+    assert "+18% GST" not in r
 
 
 def test_followup_names_the_service_not_a_catalog_product():

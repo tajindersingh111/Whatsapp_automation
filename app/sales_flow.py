@@ -714,6 +714,24 @@ _STALE_TAIL_RE = re.compile(
 )
 
 
+def rate_for(sf: dict, cfg: BotConfig, pages: int | None = None) -> int | None:
+    """The per-sheet rate (GST included) that actually applies: the lower, volume rate
+    at or above the minimum order, the higher one below it — a smaller order still gets
+    made, just not at the rate a 5-sheet order gets."""
+    f = cfg.sales_flow
+    sheet = (sf.get("size") or "").upper()
+    tier = f.sheet_rate.get(sheet)
+    if not tier:
+        return None
+    if pages is None:
+        n = re.match(r"\d+", sf.get("pages") or "")
+        pages = int(n.group()) if n else None
+    below, at_min = tier
+    if pages is None:
+        return at_min  # headline number before we know the count
+    return at_min if pages >= f.min_sheets else below
+
+
 def estimate_line(sf: dict, cfg: BotConfig) -> str | None:
     """'Aapka 3 inch logo A4 par ~6 aayega — approx Rs 33/piece.' The per-piece number is
     what a customer actually compares, and "Rs 200 per sheet" on its own hides it."""
@@ -727,7 +745,7 @@ def estimate_line(sf: dict, cfg: BotConfig) -> str | None:
     label = sf.get("sticker_size") or "design"
     if per == 0:
         return f.estimate_too_big.replace("{size}", label).replace("{sheet}", sheet).strip()
-    rate = f.sheet_rate.get(sheet)
+    rate = rate_for(sf, cfg)
     if not rate:
         return None
     return (f.estimate_text.replace("{size}", label).replace("{sheet}", sheet)
@@ -735,20 +753,33 @@ def estimate_line(sf: dict, cfg: BotConfig) -> str | None:
             .replace("{rate}", str(rate)).strip())
 
 
-def bulk_line(sf: dict, cfg: BotConfig) -> str | None:
-    """'50 sheet par bulk rate — Rs 180/sheet, approx Rs 30/piece', once they qualify."""
+def below_min_line(sf: dict, cfg: BotConfig) -> str | None:
+    """'2 sheet bhi ban jayegi, thoda zyada rate par — 5 sheet par kam padega.' Offered,
+    not forced: the order stays at what they asked for unless they choose to raise it."""
     f = cfg.sales_flow
     if sf.get("service") != "uvdtf":
         return None
     sheet = (sf.get("size") or "").upper()
-    tier = f.bulk_tier.get(sheet)
     n = re.match(r"\d+", sf.get("pages") or "")
-    if not tier or not n or int(n.group()) < tier[0]:
+    tier = f.sheet_rate.get(sheet)
+    if not n or not tier or int(n.group()) >= f.min_sheets:
         return None
-    per = per_sheet(sf)
-    piece = f", yaani approx Rs {round(tier[1] / per)} per piece" if per else ""
-    return (f.bulk_text.replace("{pages}", n.group()).replace("{sheet}", sheet)
-            .replace("{rate}", str(tier[1])).replace("{piece}", piece).strip())
+    below, at_min = tier
+    return (f.below_min_text.replace("{count}", n.group()).replace("{sheet}", sheet)
+            .replace("{below}", str(below)).replace("{min}", str(f.min_sheets))
+            .replace("{at_min}", str(at_min)).strip())
+
+
+def bulk_line(sf: dict, cfg: BotConfig) -> str | None:
+    """'10+ sheet lene par rate aur kam ho jaata hai' — said once they are past 10, since
+    there is no fixed number for it; the team settles the exact rate."""
+    f = cfg.sales_flow
+    if sf.get("service") != "uvdtf":
+        return None
+    n = re.match(r"\d+", sf.get("pages") or "")
+    if not n or int(n.group()) <= 10:
+        return None
+    return f.above_ten_text.strip()
 
 
 def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
@@ -793,15 +824,6 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     had_design_size = bool(sf.get("sticker_in"))
     absorb(sf, text, kind)
     pages_auto = sf.pop("pages_auto", False)
-    # "Minimum order — 5 sheet." Below it, the order is booked at the minimum and the
-    # customer is told what that gets them, instead of quietly quoting 3 sheets.
-    min_applied = False
-    if sf.get("service") == "uvdtf" and sf.get("pages") and not sf.get("min_checked"):
-        sf["min_checked"] = True
-        n = re.match(r"\d+", sf["pages"])
-        if n and int(n.group()) < f.min_sheets:
-            sf["pages"] = f"{f.min_sheets} sheet (minimum)"
-            min_applied = True
 
     # Already quoted and nothing left to ask: the funnel is finished, let the normal
     # FAQ / fallback path own the conversation again.
@@ -965,35 +987,18 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         est = estimate_line(sf, cfg)
         if est:
             lines.append(est)
-    if pages_auto and not min_applied:
+    if pages_auto:
         qty_n = re.match(r"\d+", sf.get("qty") or "")
         lines.append(f.pages_auto_text.replace("{qty}", qty_n.group() if qty_n else "")
                      .replace("{pages}", re.match(r"\d+", sf["pages"]).group())
                      .replace("{sheet}", (sf.get("size") or "").upper()).strip())
-    if min_applied:
-        line = f.min_order_text.replace("{min}", str(f.min_sheets)).strip()
-        per = per_sheet(sf)
-        if per:
-            line += " " + (f.min_order_pieces.replace("{min}", str(f.min_sheets))
-                           .replace("{sheet}", (sf.get("size") or "").upper())
-                           .replace("{pieces}", str(per * f.min_sheets)).strip())
-        lines.append(line)
-    # A real sales manager tells a customer about a better rate before they have to ask
-    # for one. The volume breaks are on the published card, so suggesting them here is
-    # not a made-up discount — it is the one they would get anyway, said a step early.
+    # A real sales manager explains the rate before being asked. Below the minimum, that
+    # is the honest tradeoff ("2 sheet bhi ban jayegi, thoda zyada rate par") rather than
+    # a made-up discount; past 10 sheets, it is a real one worth mentioning.
     if sf.get("pages") and not before.get("pages") and sf.get("service") == "uvdtf":
-        n = re.match(r"\d+", sf["pages"])
-        sheet = (sf.get("size") or "").strip().upper()
-        tier = f.bulk_tier.get(sheet)
-        if n and tier:
-            if int(n.group()) < tier[0]:
-                lines.append((f.bulk_upsell_a3 if sheet == "A3" else f.bulk_upsell).strip())
-            else:
-                # Already past the break: say so, with what it does to the per-piece
-                # price. Leaving them on the 1–5 sheet rate undersold our own offer.
-                bl = bulk_line(sf, cfg)
-                if bl:
-                    lines.append(bl)
+        line = below_min_line(sf, cfg) or bulk_line(sf, cfg)
+        if line:
+            lines.append(line)
     # A plain "no" to something ("photo abhi nahi hai", "nahi photo nahi") that filled
     # nothing used to get silence and the next question — a person says "koi baat nahi"
     # first. Said about the design, it also covers both things they might have meant.
@@ -1006,11 +1011,12 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
         sf["urgency_acked"] = True
         lines.append(f.urgency_ack.strip())
     if objection:
-        # The answer to "zyada hai" is the best rate they actually qualify for, in rupees
-        # per piece — unless the volume-break line above already said it.
-        best = bulk_line(sf, cfg) or estimate_line(sf, cfg)
-        if best and best not in lines:
-            lines.append(best)
+        # The answer to "zyada hai" is the concrete rate they qualify for, in rupees per
+        # piece, plus the further discount past 10 sheets when that also applies —
+        # unless a line above already said it.
+        for extra in (estimate_line(sf, cfg), bulk_line(sf, cfg)):
+            if extra and extra not in lines:
+                lines.append(extra)
     elif pushing:
         lines.append((f.price_again if sf.get("quoted") else f.deflect_text).strip())
     lines.append(question(slot, sf, cfg))

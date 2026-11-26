@@ -134,8 +134,11 @@ def text_message(body: str, preview_url: bool = True) -> dict:
     return {"type": "text", "text": {"body": body[:4096], "preview_url": preview_url}}
 
 
-def image_message(link: str, caption: str | None = None) -> dict:
-    image: dict = {"link": link}
+def image_message(link: str | None = None, caption: str | None = None, media_id: str | None = None) -> dict:
+    """A link works for a public URL (campaign headers); a file the team just picked
+    from their computer has no URL, so it goes up with upload_media() first and is
+    referenced here by the media id Meta gave back instead."""
+    image: dict = {"id": media_id} if media_id else {"link": link}
     if caption:
         image["caption"] = caption[:1024]
     return {"type": "image", "image": image}

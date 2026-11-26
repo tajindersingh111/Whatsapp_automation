@@ -2,7 +2,7 @@ from sqlalchemy import select
 
 from app.models import Job, StoreConnection
 from app.security import decrypt_json
-from app.services.conversations import get_or_create_contact, get_or_create_conversation
+from app.services.conversations import get_or_create_contact, get_or_create_conversation, utcnow
 from app.services.messaging import send_message, sender_for
 from app.whatsapp.client import template_message
 from tests.conftest import ADMIN, FakeLLM, drain, msg, text_block, tool_block
@@ -202,3 +202,38 @@ async def test_inbox_views_separate_real_conversations(api, tenant, db, graph, f
     assert (await view("human")).json()[0]["mode"] == "human"
     assert phones(await api.get(f"/admin/tenants/{tenant.id}/conversations?view=all&q=Silent", headers=ADMIN)) == {"919861000003"}
     assert (await view("nonsense")).status_code == 422
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+
+
+async def test_human_sends_a_photo_to_the_customer(api, tenant, db, graph):
+    r = await api.put(f"/admin/tenants/{tenant.id}/whatsapp",
+                       json={"phone_number_id": "5550001", "waba_id": "777", "access_token": "EAAG-good-token"}, headers=ADMIN)
+    assert r.status_code == 200
+    contact = await get_or_create_contact(db, tenant.id, "919812300000", "Ravi")
+    contact.last_inbound_at = utcnow()
+    conv = await get_or_create_conversation(db, tenant.id, contact)
+    await db.commit()
+
+    r = await api.post(f"/admin/tenants/{tenant.id}/conversations/{conv.id}/media",
+                        files={"file": ("catalogue.png", PNG, "image/png")}, data={"caption": "Yeh dekhiye"}, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    assert graph.uploaded == [{"phone_id": "5550001", "type": "image/png", "size": len(PNG)}]
+    assert graph.sent[-1] == {"messaging_product": "whatsapp", "recipient_type": "individual", "to": "919812300000",
+                               "type": "image", "image": {"id": "media-1", "caption": "Yeh dekhiye"}}
+
+    not_image = await api.post(f"/admin/tenants/{tenant.id}/conversations/{conv.id}/media",
+                                files={"file": ("x.txt", b"hello", "text/plain")}, headers=ADMIN)
+    assert not_image.status_code == 200  # the type comes from the browser; Meta itself would reject a bad one
+
+
+async def test_cannot_send_a_photo_outside_the_24h_window(api, tenant, db, graph):
+    await api.put(f"/admin/tenants/{tenant.id}/whatsapp",
+                  json={"phone_number_id": "5550001", "waba_id": "777", "access_token": "EAAG-good-token"}, headers=ADMIN)
+    contact = await get_or_create_contact(db, tenant.id, "919812300001", "Old Lead")
+    conv = await get_or_create_conversation(db, tenant.id, contact)  # last_inbound_at stays None
+    await db.commit()
+    r = await api.post(f"/admin/tenants/{tenant.id}/conversations/{conv.id}/media",
+                        files={"file": ("catalogue.png", PNG, "image/png")}, headers=ADMIN)
+    assert r.status_code == 409

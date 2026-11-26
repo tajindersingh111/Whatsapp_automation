@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,7 @@ from app.security import decrypt, decrypt_json, encrypt, encrypt_json, generate_
 from app.services import catalog
 from app.services.conversations import in_service_window
 from app.services.messaging import send_message, sender_for
-from app.whatsapp.client import SimulatedSender, WhatsAppError, check_connection, discover_numbers, download_media, text_message
+from app.whatsapp.client import SimulatedSender, WhatsAppError, check_connection, discover_numbers, download_media, image_message, text_message, upload_media
 from app.whatsapp.webhook import InboundMessage
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -475,6 +475,42 @@ async def human_reply(tenant_id: uuid.UUID, conv_id: int, body: HumanMessageIn, 
         raise HTTPException(status_code=409, detail="More than 24h since the customer's last message. Only approved templates can be sent.")
     sender = await sender_for(session, tenant, conv)
     msg = await send_message(session, sender, conv, contact, text_message(body.text), by="human")
+    await session.commit()
+    return {"id": msg.id, "status": msg.status, "error": msg.error}
+
+
+@router.post("/tenants/{tenant_id}/conversations/{conv_id}/media")
+async def human_reply_media(
+    tenant_id: uuid.UUID, conv_id: int, file: UploadFile = File(...), caption: str = Form(""),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """The team sending a photo — a catalogue screenshot, a QR code, anything — from the
+    inbox. Same 24h-window rule as a text reply; the file goes to Meta's media servers
+    first (a customer's phone can't fetch it from ours), then out as an image message."""
+    tenant = await _tenant(session, tenant_id)
+    conv = await session.get(Conversation, conv_id)
+    if conv is None or conv.tenant_id != tenant_id:
+        raise HTTPException(status_code=404)
+    contact = await session.get(Contact, conv.contact_id)
+    assert contact is not None
+    if not conv.is_playground and not in_service_window(contact):
+        raise HTTPException(status_code=409, detail="More than 24h since the customer's last message. Only approved templates can be sent.")
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="Image too large (5 MB limit)")
+    account = await session.scalar(select(WhatsAppAccount).where(WhatsAppAccount.tenant_id == tenant_id))
+    if account is None or account.phone_number_id.startswith("sandbox"):
+        raise HTTPException(status_code=409, detail="WhatsApp is not connected")
+    mime = file.content_type or "image/jpeg"
+    try:
+        media_id = await upload_media(
+            http_client(), get_settings().meta_graph_version, account.phone_number_id,
+            decrypt(account.access_token_enc), data, mime, file.filename or "photo.jpg",
+        )
+    except WhatsAppError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    sender = await sender_for(session, tenant, conv)
+    msg = await send_message(session, sender, conv, contact, image_message(media_id=media_id, caption=caption or None), by="human")
     await session.commit()
     return {"id": msg.id, "status": msg.status, "error": msg.error}
 

@@ -742,6 +742,8 @@ views.inbox = async (el) => {
     <div class="chat" id="conv_chat">${msgs.map((m) => `${bubble(m)}${m.direction === "out" && m.sender === "bot" ? `<button class="ghost sm" style="align-self:flex-end" data-fix="${m.id}">Teach a better answer</button>` : ""}`).join("")}</div>
     <div class="row" style="margin-top:12px">
       <input id="reply" placeholder="${c.can_reply ? "Reply as the team…" : "24h window closed: only templates can be sent"}" style="flex:1" ${c.can_reply ? "" : "disabled"}>
+      <input type="file" id="photo_file" accept="image/*" style="display:none">
+      <button class="secondary" id="photo_btn" title="Send a photo" ${c.can_reply ? "" : "disabled"}>📷</button>
       <button class="primary" id="send" ${c.can_reply ? "" : "disabled"}>Send</button>
     </div>`;
   const chat = $("#conv_chat", panel); chat.scrollTop = chat.scrollHeight;
@@ -757,6 +759,18 @@ views.inbox = async (el) => {
   };
   $("#send", panel).onclick = sendReply;
   $("#reply", panel).addEventListener("keydown", (e) => { if (e.key === "Enter") sendReply(); });
+  const photoBtn = $("#photo_btn", panel), photoInput = $("#photo_file", panel);
+  if (photoBtn) photoBtn.onclick = () => photoInput.click();
+  if (photoInput) photoInput.onchange = async () => {
+    const f = photoInput.files[0]; if (!f) return;
+    try {
+      if (c.mode === "bot") await api(T(`/conversations/${c.id}/mode`), { method: "POST", body: { mode: "human" } });
+      const fd = new FormData(); fd.append("file", f);
+      await apiForm(T(`/conversations/${c.id}/media`), fd);
+    } catch (err) { toast(err.message, true); }
+    photoInput.value = "";
+    render();
+  };
   panel.querySelectorAll("[data-fix]").forEach((b) => b.onclick = () => {
     const idx = msgs.findIndex((m) => m.id === Number(b.dataset.fix));
     const question = [...msgs.slice(0, idx)].reverse().find((m) => m.direction === "in")?.body || "";

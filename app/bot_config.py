@@ -169,11 +169,15 @@ class SalesFlowConfig(BaseModel):
     # The script: "Kya aapke paas design ready hai? -> Design bhej do (PDF/PNG format
     # only). Nahi hai -> yahan se catalogue mein select karna hai, SS bhejwa denge."
     ask_design: str = "Theek hai 👍 Kya aapke paas design ready hai? Ho to yahin bhej dijiye (PDF ya PNG format mein). Nahi hai to hamare catalogue se select kar sakte hain — main screenshots bhejwa deti hoon."
+    # DTF (fabric) also takes a vector file, since garment printing is often cut from one.
+    ask_design_fabric: str = "Kya aapka khud ka design hai? Ho to yahin bhej dijiye — PDF, PNG, CDR teeno file accept hain. Nahi hai to hamare catalogue se select kar sakte hain — main screenshots bhejwa deti hoon."
     # Generic lanes (signage, fabric, mug) — examples that fit a board and a t-shirt alike.
     ask_size: str = "{name} ji, kitne size ka chahiye? Jaise 4 inch, 12x18 inch ya 3x2 feet — size se hi rate banta hai."
     # UV DTF only prints in two page sizes, so the question is a choice, not an open one.
     ask_size_uvdtf: str = "Bahut achhe! Aapko kis size mein print karwana hai? Hamare yaha A4 aur A3 size mein print hote hain."
     ask_qty: str = "Kitne piece chahiye? Quantity likh dijiye — bulk order mein rate aur kam ho jaata hai 👍"
+    # DTF (fabric) prints are priced by the meter, not the piece.
+    ask_qty_fabric: str = "DTF printing meter ke according hoti hai — aapko kitne meter print karwana hai?"
     # Only asked for UV DTF — the rate card is per sheet, not per piece.
     ask_pages: str = "Kitni sheet print karwani hain? Minimum order 5 sheet ka hai — 10+ sheet par rate aur kam ho jaata hai."
     # The script asks for all three in one go to confirm the order.
@@ -192,9 +196,8 @@ class SalesFlowConfig(BaseModel):
     # UV DTF does not bond to fabric. Saying so plainly, and moving them to the lane
     # that can do it, keeps the lead instead of quoting the wrong process.
     fabric_redirect: str = (
-        "Ek baat bata doon ji — UV DTF sticker cloth par nahi lagta, wo plain ya hard surface ke liye hai. "
-        "Kapde ke liye hamara DTF print hota hai — usme design aapko heat press se paste karna hoga, "
-        "aur wash mein bhi nahi nikalta 👍"
+        "Ek baat bata doon ji — UV DTF sticker fabric par paste nahi hota, wo plain ya hard surface ke liye hai. "
+        "Fabric ke liye hamare paas alag DTF printing machine hai, jo sirf fabric par print karne ke liye hai 👍"
     )
     # Said when the customer calls it expensive, which is an objection, not a question.
     objection_text: str = (
@@ -211,6 +214,9 @@ class SalesFlowConfig(BaseModel):
         "Is kaam ka rate size, material aur quantity par banta hai, isliye main andaaza nahi dungi — "
         "hamari team aapko exact quote bhejegi."
     )
+    # DTF (fabric) already told us the meter and design — no need to also say "main
+    # andaaza nahi dungi, team bata degi" after just asking for exactly that.
+    fabric_quote_text: str = "Rate meter aur design ke hisaab se tay hota hai — team aapko final rate confirm karegi."
 
     # Sent once, a few hours after a customer goes quiet mid-funnel (lead_followup).
     # Plain text, no buttons — the funnel never shows any, and this is still that chat.

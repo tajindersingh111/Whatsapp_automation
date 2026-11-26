@@ -305,3 +305,38 @@ def test_greeting_restarts_the_funnel_after_backing_off():
     sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "abhi nahi, sochta hoon", "ok", "hi")
     assert "naam" in replies[-1].lower()
     assert not sf.get("paused")
+
+
+def test_fabric_redirect_says_fabric_not_cloth_and_names_the_machine():
+    _, replies = chat("hi", "Ravi", "uv dtf", "cloth par chahiye")
+    r = replies[-1]
+    assert "fabric" in r.lower() and "kapda" not in r.lower() and "kapde" not in r.lower()
+    assert "alag" in r and "machine" in r.lower()
+
+
+def test_fabric_quantity_is_in_meters_not_pieces():
+    """Found live: a DTF (fabric) order's quantity was stored and shown as "piece" even
+    though the question explicitly asks for meters — the underlying parser always
+    labelled a bare number "piece" regardless of which service was being quoted."""
+    sf, replies = chat("hi", "Ravi", "dtf printing", "t-shirt", "design nahi hai", "3x2 feet", "300")
+    assert sf["qty"] == "300 meter"
+    sf2, _ = chat("hi", "Ravi", "dtf printing", "t-shirt", "design nahi hai", "3x2 feet", "300 meter")
+    assert sf2["qty"] == "300 meter"
+
+
+def test_fabric_asks_for_meters_and_accepts_cdr():
+    _, replies = chat("hi", "Ravi", "dtf printing", "hoodie", "<image>")
+    assert "CDR" in replies[-1]
+    sf, replies = chat("hi", "Ravi", "dtf printing", "hoodie", "design nahi hai", "3x2 feet")
+    assert "meter" in replies[-1].lower()
+
+
+def test_fabric_quote_does_not_say_andaaza_nahi_dungi():
+    _, replies = chat("hi", "Ravi", "dtf printing", "cap", "design nahi hai", "2x2 feet", "50")
+    assert "andaaza nahi" not in replies[-1]
+    assert "meter" in replies[-1].lower()
+
+
+def test_design_ready_ack_never_mentions_stickers_for_a_non_sticker_job():
+    _, replies = chat("hi", "Ravi", "dtf printing", "cap", "haan design ready hai")
+    assert "sticker" not in replies[-1].lower()

@@ -260,7 +260,7 @@ def per_sheet(sf: dict) -> int | None:
     return max(fit(w, h), fit(h, w))
 
 
-_QTY_RE = re.compile(r"(\d{1,6})\s*(piece|pieces|pcs|pc|nos|sticker|stickers|sheet|sheets|mug|mugs|bottle|bottles|box|boxes|tshirt|tshirts|unit|units)\b", re.I)
+_QTY_RE = re.compile(r"(\d{1,6})\s*(piece|pieces|pcs|pc|nos|sticker|stickers|sheet|sheets|mug|mugs|bottle|bottles|box|boxes|tshirt|tshirts|unit|units|meter|meters|metre|metres|mtr|mtrs)\b", re.I)
 # "500", "500-600", "500 approx" — nobody repeats the unit they were just asked about.
 # Only read as a quantity when the quantity was the question, so a pincode or a price
 # mentioned elsewhere in the chat never lands in this slot.
@@ -397,7 +397,9 @@ def _take(sf: dict, slot: str, text: str, loose: bool = False) -> None:
     if slot == "qty":
         m = _BARE_QTY_RE.search(cleaned)
         if m and not _SIZE_RE.search(cleaned):
-            sf["qty"] = m.group(0).strip() + " piece"
+            # DTF (fabric) is sold by the meter; nothing else here is.
+            unit = "meter" if sf.get("service") == "fabric" else "piece"
+            sf["qty"] = m.group(0).strip() + " " + unit
         return
 
     if slot == "city":
@@ -489,7 +491,8 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         elif asked == "qty":
             bare = _BARE_QTY_RE.search(text or "")
             if bare and not _SIZE_RE.search(text or ""):
-                sf["qty"] = bare.group(0).strip() + " piece"
+                unit = "meter" if sf.get("service") == "fabric" else "piece"
+                sf["qty"] = bare.group(0).strip() + " " + unit
 
     if not sf.get("pages") and asked == "pages":
         m = _PAGES_RE.search(text or "")
@@ -644,6 +647,10 @@ def question(slot: str, sf: dict, cfg: BotConfig) -> str:
     # would ask for something nobody there can answer.
     if slot == "size" and sf.get("service") == "uvdtf":
         text = f.ask_size_uvdtf
+    elif slot in ("design", "qty") and sf.get("service") == "fabric":
+        # DTF (fabric) takes a vector file too, and is priced by the meter, not the
+        # piece — the generic questions ask for things that don't apply here.
+        text = getattr(f, f"ask_{slot}_fabric")
     else:
         text = getattr(f, f"ask_{slot}")
     first = (sf.get("name") or "").split(" ")[0]
@@ -668,7 +675,7 @@ _ACK: dict[str, tuple[str, ...]] = {
     # the ack does not also promise to ask it.
     "design_customer": ("Perfect! Jab ho sake yahin bhej dijiyega 👍 Aapke design ke according hi prepare karenge.",
                         "Badhiya, design ready hai to kaam fast ho jayega — yahin bhej dijiye.",
-                        "Perfect, bas yahin bhej dijiyega jab free ho 👍 Aapke design ke hisaab se hi stickers prepare karenge."),
+                        "Perfect, bas yahin bhej dijiyega jab free ho 👍 Aapke design ke hisaab se hi prepare karenge."),
     "size": ("{v} — note kar liya.", "Theek hai, {v}.", "{v}, likh liya."),
     "qty": ("{v} — samajh gayi.", "{v}, theek hai.", "Achha, {v}."),
     # It is a full delivery address now, not a city — "Shop 12, MI Road se hain" read
@@ -811,6 +818,18 @@ def bulk_line(sf: dict, cfg: BotConfig) -> str | None:
     return f.above_ten_text.strip()
 
 
+def quote_body(sf: dict, cfg: BotConfig) -> str:
+    """The rate itself: the published card for UV DTF, the meter-based line for DTF
+    (fabric), and a plain "team will quote you" for every other lane, which has no
+    published rate to show."""
+    f = cfg.sales_flow
+    if sf.get("service") == "uvdtf":
+        return f.price_text.strip()
+    if sf.get("service") == "fabric":
+        return f.fabric_quote_text.strip()
+    return f.quote_by_team.strip()
+
+
 def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
     """What we know, then a price only where there is a published one to give."""
     f = cfg.sales_flow
@@ -825,7 +844,7 @@ def quote(sf: dict, cfg: BotConfig, final: bool = True) -> str:
         parts.append(est)
     # Only UV DTF has a rate card. Showing sheet rates for a t-shirt or a signage job
     # would be a number we cannot stand behind.
-    body = f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip()
+    body = quote_body(sf, cfg)
     # A tenant config saved before the closing line was split out still carries that
     # line inside the rate text, and PUT /config freezes every default into the stored
     # JSON. Dropping the duplicate beats saying it twice in one message.
@@ -1083,7 +1102,7 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             # time. "Maine upar bhej diya hai, check kar lijiye" is not an answer.
             again = estimate_line(sf, cfg)
             if not again:
-                again = f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip()
+                again = quote_body(sf, cfg)
             lines.append(again)
         else:
             lines.append(f.deflect_text.strip())

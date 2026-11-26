@@ -1295,6 +1295,14 @@ views.training = async (el) => {
     const lines = (sel) => $(sel, el).value.split("\n").map((s) => s.trim()).filter(Boolean);
     const body = {
       ...base,
+      // Never round-tripped: this box is "templates, timings, model", not the sales
+      // script, and there is no form control for it here. Sending it back verbatim
+      // froze a snapshot of every sales_flow text on *every* unrelated save (toggling
+      // a checkbox, say) — so a wording or pricing change in the code could never
+      // reach a tenant again once anyone had saved this page even once. Leaving it out
+      // of the request means the backend falls back to the code's current defaults,
+      // which is what should happen until this gets its own dedicated editor.
+      sales_flow: undefined,
       brand_name: $("#c_brand", el).value, assistant_name: $("#c_assistant", el).value, store_url: $("#c_url", el).value || null,
       support_hours: $("#c_hours", el).value, about: $("#c_about", el).value, tone: $("#c_tone", el).value, language: $("#c_lang", el).value,
       rules: lines("#c_rules"),

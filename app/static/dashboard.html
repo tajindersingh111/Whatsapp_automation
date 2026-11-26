@@ -1360,10 +1360,11 @@ views.setup = async (el) => {
     <div class="kpi"><div class="l">Store</div><div class="v" style="font-size:20px">${t.store ? esc(t.store.kind) : "Not connected"}</div><div class="s">${t.active_products} active products</div></div>
     <div class="kpi"><div class="l">Brand id</div><div class="v" style="font-size:13px;font-family:ui-monospace,monospace;word-break:break-all">${t.id}</div><div class="s">${t.active ? "active" : "paused"}</div></div>
   </div>
+  ${card("Bot status", "Turn the bot off to pause it — customer messages still arrive and are saved in the inbox, the bot just stops auto-replying until you turn it back on.", `
+    <label class="check" style="font-size:16px"><input type="checkbox" id="b_active" ${t.active ? "checked" : ""}> <b>${t.active ? "Bot is ON — replying automatically" : "Bot is OFF — not replying"}</b></label>`)}
   ${card("Brand", "Name shown here and in bot messages to customers.", `
     <label>Brand name</label>
     <div class="row" style="flex-wrap:nowrap"><input id="b_name" value="${esc(t.name)}" maxlength="200" style="flex:1"><button class="primary" id="b_save">Save name</button></div>
-    <label class="check" style="margin-top:14px"><input type="checkbox" id="b_active" ${t.active ? "checked" : ""}> Brand active (bot replies to this brand's customers)</label>
     <details style="margin-top:14px"><summary style="color:var(--danger)">Delete brand</summary>
       <p class="muted small">Permanently deletes <b>${esc(t.name)}</b> with its inbox, contacts, campaigns, training and WhatsApp connection. This cannot be undone. Type the brand name to confirm.</p>
       <div class="row" style="flex-wrap:nowrap"><input id="b_confirm" placeholder="${esc(t.name)}" style="flex:1"><button class="secondary danger" id="b_delete">Delete permanently</button></div>
@@ -1402,8 +1403,11 @@ views.setup = async (el) => {
     try { await api(T(), { method: "PATCH", body: { name } }); toast("Brand renamed"); await loadTenants(); render(); } catch (err) { toast(err.message, true); }
   };
   $("#b_active", el).onchange = async (e) => {
-    try { await api(T(), { method: "PATCH", body: { active: e.target.checked } }); toast(e.target.checked ? "Brand active" : "Brand paused: the bot will not reply"); }
-    catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
+    try {
+      await api(T(), { method: "PATCH", body: { active: e.target.checked } });
+      toast(e.target.checked ? "Bot is ON — replying automatically" : "Bot is OFF — messages will be saved, the bot will not reply");
+      await loadTenants(); render();
+    } catch (err) { e.target.checked = !e.target.checked; toast(err.message, true); }
   };
   $("#b_delete", el).onclick = async () => {
     const confirmName = $("#b_confirm", el).value.trim();

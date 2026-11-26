@@ -197,7 +197,7 @@ _SIZE_RE = re.compile(
     re.I,
 )
 # UV DTF: the sheet the rate is per, and the size of one design on it.
-_SHEET_RE = re.compile(r"\bA[34]\b", re.I)
+_SHEET_RE = re.compile(r"\bA\s?[34]\b", re.I)
 _SHEET_IN = {"A4": (8.27, 11.69), "A3": (11.69, 16.54)}
 _DIM_RE = re.compile(
     r'(\d+(?:\.\d+)?)\s*(?:x|\*|by|×)\s*(\d+(?:\.\d+)?)\s*(inch|inches|in|cm|mm|")?'
@@ -379,6 +379,11 @@ def _take(sf: dict, slot: str, text: str, loose: bool = False) -> None:
         cleaned, words = address, aw
         if not cleaned:
             return
+        # The full-address reading already had its generous chance and did not pan out
+        # ("2*2" is not an address with a house number or a comma just because it is
+        # short) — the plain city check below must apply its own rules in full, not the
+        # loose ones meant for "give the whole free-text reply the benefit of the doubt".
+        loose = False
 
     if slot == "qty":
         m = _BARE_QTY_RE.search(cleaned)
@@ -456,7 +461,8 @@ def absorb(sf: dict, text: str, kind: str = "text") -> None:
         if not sf.get("size"):
             m = _SHEET_RE.search(text or "")
             if m:
-                sf["size"] = m.group(0).upper()
+                # "a 4" — people space it out; the slot always stores the clean "A4".
+                sf["size"] = m.group(0).upper().replace(" ", "")
         if not sf.get("sticker_in"):
             dims = _dims_inches(text)
             if dims:

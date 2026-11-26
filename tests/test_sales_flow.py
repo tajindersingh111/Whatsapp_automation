@@ -261,3 +261,24 @@ def test_every_per_piece_line_says_approx():
     sf, replies = chat("hi", "Ravi", "uv dtf", "box", "design nahi hai", "A3", "2.5x2.5 inch")
     assert "24 piece" in replies[-1]
     assert "lagbhag" in replies[-1] and "approx" in replies[-1]
+
+
+def test_spaced_a4_sets_size_not_qty():
+    """Found in a real chat: "a 4" (with a space) failed the A4 regex, fell through to
+    the out-of-order slot search, and got misread as a quantity of 4 pieces."""
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "a 4")
+    assert sf["size"] == "A4" and sf.get("qty") is None
+    assert "note kar liya" in replies[-1] or "A4" in replies[-1]
+
+
+def test_dimension_like_reply_is_never_read_as_the_address():
+    """Found live: "2*2" (a design size) sent while the bot was waiting for the
+    name+address+mobile message landed as the city, because the strict character-class
+    check only ran "if not loose" — and the loose flag was never cleared after the
+    full-address reading had already failed."""
+    sf, replies = chat("hi", "Ravi", "uv dtf", "bottle", "design nahi hai", "A4", "4 piece",
+                       "2 sheet", "2*2")
+    assert sf.get("city") is None
+    assert sf["sticker_in"] == [2.0, 2.0]
+    assert "15 piece" in replies[-1]  # the estimate still fires
+    assert "address" in replies[-1].lower()  # and the address question is asked again

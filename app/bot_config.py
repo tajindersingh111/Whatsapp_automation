@@ -153,10 +153,11 @@ class SalesFlowConfig(BaseModel):
     service_known: str = "Aapne {service} ke baare mein poocha tha — ye hamara sabse demand wala kaam hai \U0001f44d"
     # {prompt} and {options} come from the chosen service's fork.
     ask_variant: str = "{prompt}\n{options}"
-    # The script: "Simer -> Name: Aapka naam jaan sakti hoon?"
-    ask_name: str = "Namaste 🙏 Main Simer, HS Company se. Aapka naam jaan sakti hoon?"
+    # No persona name — just the brand, then straight into the script's own question:
+    # "Aapka naam jaan sakti hoon?"
+    ask_name: str = "Namaste 🙏 HS Company se. Aapka naam jaan sakti hoon?"
     # First message already asks the rate (most ad clicks do). Promise it, then the name.
-    ask_name_price: str = "Namaste 🙏 Main Simer, HS Company se. Rate zaroor bataungi — pehle aapka naam jaan sakti hoon?"
+    ask_name_price: str = "Namaste 🙏 HS Company se. Rate zaroor bataungi — pehle aapka naam jaan sakti hoon?"
     # When nothing matched. The menu bot's version says "neeche se chuniye ... jaise
     # 'blue bedsheet'" — buttons that are gone, for a shop that does not sell bedsheets.
     not_understood: str = "Ye main theek se samajh nahi paayi 🙏 Thoda aur bata dijiye — ya team se baat karni ho to 'team se baat' likh dijiye."

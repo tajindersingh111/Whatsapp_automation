@@ -115,10 +115,15 @@ class SalesFlowConfig(BaseModel):
     below_min_text: str = "Theek hai, {count} {sheet} sheet bhi ban jayegi, lekin price thoda zyada hoga — Rs {below}/sheet. {min} sheet banwa lijiye to Rs {at_min}/sheet ka rate milega, kaafi kam padega 👍"
     # Said once past 10 sheets — a real further discount, with no fixed number to quote.
     above_ten_text: str = "10+ sheet lene par rate aur bhi kam ho jaata hai — team exact rate confirm kar degi 👍"
-    # A plain price question after the rate card already went out.
-    price_again: str = "Rate maine upar bhej diya hai 👆 Koi confusion ho to team call par sab samjha degi."
     # Sheets worked out from quantity and design size, instead of asking.
     pages_auto_text: str = "{qty} piece ke liye lagbhag {pages} {sheet} sheet lagengi 👍"
+
+    # "5 sheet mein kitne piece aayenge?" asked before we know which sheet they mean.
+    ask_size_for_yield: str = "Aapko sheet konsi chahiye — A4 ya A3? Uske according aapko bata dungi 👍"
+    # Sheet known, design size still isn't — can't multiply without it.
+    ask_design_size_for_yield: str = "Design ka size bata dijiye (jaise 2 inch ya 2x2 inch), tabhi exact piece count bata paungi 👍"
+    # {count} sheets asked about, {sheet} A4/A3, {pieces} the multiplied answer.
+    sheet_yield_text: str = "{count} {sheet} sheet mein lagbhag {pieces} piece aa jayenge 👍"
     # A bare "thanks"/"ok"/"hi" once the deal is done, or after a soft close. Falling
     # through to "samajh nahi aaya" right after closing a sale is what makes a bot
     # obvious; this keeps the door open instead.

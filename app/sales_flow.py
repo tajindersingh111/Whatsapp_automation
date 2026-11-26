@@ -281,6 +281,20 @@ _PHONE_RE = re.compile(r"(?:\+?91[\s-]?|0)?\b([6-9]\d{9})\b")
 _SAME_NUMBER_WORDS = {"yahi", "yehi", "isi", "same", "yahin"}
 _MEDIA_KINDS = ("image", "sticker", "document", "video")
 
+# "5 sheet mein kitne piece aayenge?" — a question, not an answer to the pages slot.
+# Loose on word order ("kitne piece 5 sheet mein aayenge" asks the same thing) and on
+# what sits between the number and the question word.
+_SHEET_QTY_WORD_RE = re.compile(r"\bkitn[ei]\b", re.I)
+_SHEET_QTY_PIECE_RE = re.compile(r"\b(piece|pieces|sticker|stickers)\b", re.I)
+_SHEET_QTY_NUM_RE = re.compile(r"\b(\d{1,3})\s*sheets?\b", re.I)
+
+
+def _asks_sheet_yield(text: str) -> int | None:
+    if not (_SHEET_QTY_WORD_RE.search(text or "") and _SHEET_QTY_PIECE_RE.search(text or "")):
+        return None
+    m = _SHEET_QTY_NUM_RE.search(text or "")
+    return int(m.group(1)) if m else None
+
 
 def _words(text: str) -> set[str]:
     return {w.lower() for w in _WORD_RE.findall(text or "")}
@@ -825,6 +839,26 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
     absorb(sf, text, kind)
     pages_auto = sf.pop("pages_auto", False)
 
+    # "5 sheet mein kitne piece aayenge?" is a direct question, not an answer to the
+    # pages slot — answering it needs the sheet (A4/A3) and the design size, in that
+    # order; ask for whichever is missing instead of guessing, and remember the count
+    # across the turn it takes to get the sheet size.
+    yield_n = sf.pop("pending_sheet_qty", None) or (
+        _asks_sheet_yield(text) if sf.get("service") == "uvdtf" and not sf.get("quoted") else None)
+    if yield_n:
+        if not sf.get("size"):
+            sf["pending_sheet_qty"] = yield_n
+            sf["asked"] = "size"
+            return f.ask_size_for_yield.strip(), False
+        per = per_sheet(sf)
+        if per:
+            if not sf.get("pages"):
+                sf["pages"] = f"{yield_n} sheet"
+            return (f.sheet_yield_text.replace("{count}", str(yield_n)).replace("{sheet}", sf["size"])
+                    .replace("{pieces}", str(per * yield_n))).strip(), False
+        sf["pending_sheet_qty"] = yield_n  # sheet known, design size still is not
+        return f.ask_design_size_for_yield.strip(), False
+
     # Already quoted and nothing left to ask: the funnel is finished, let the normal
     # FAQ / fallback path own the conversation again.
     if sf.get("quoted") and next_slot(sf, cfg) is None:
@@ -1018,6 +1052,14 @@ def advance(sf: dict, text: str, kind: str, cfg: BotConfig) -> tuple[str | None,
             if extra and extra not in lines:
                 lines.append(extra)
     elif pushing:
-        lines.append((f.price_again if sf.get("quoted") else f.deflect_text).strip())
+        if sf.get("quoted"):
+            # Asked again after the rate already went out — answer again for real, every
+            # time. "Maine upar bhej diya hai, check kar lijiye" is not an answer.
+            again = estimate_line(sf, cfg)
+            if not again:
+                again = f.price_text.strip() if sf.get("service") == "uvdtf" else f.quote_by_team.strip()
+            lines.append(again)
+        else:
+            lines.append(f.deflect_text.strip())
     lines.append(question(slot, sf, cfg))
     return "\n\n".join(lines), False

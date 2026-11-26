@@ -80,7 +80,7 @@ class SalesFlowConfig(BaseModel):
     # Holding out longer than this on WhatsApp loses the lead.
     price_after_asks: int = 2
 
-    deflect_text: str = "Haan rate to abhi batati hoon 👍 Bas ek cheez jaan loon pehle, taaki aapko exact number milay — andaaze ka kya fayda."
+    deflect_text: str = "Pricing design ke size aur quantity par depend karti hai 👍 Aap size ya approximate requirement aur quantity bata dijiye, main aapko best available pricing share kar deti hoon."
     summary_intro: str = "Perfect 🙏 Ye sab note kar liya maine:"
     price_text: str = (
         "Rate ye rahe 👇\n"
@@ -161,7 +161,7 @@ class SalesFlowConfig(BaseModel):
     # 'blue bedsheet'" — buttons that are gone, for a shop that does not sell bedsheets.
     not_understood: str = "Ye main theek se samajh nahi paayi 🙏 Thoda aur bata dijiye — ya team se baat karni ho to 'team se baat' likh dijiye."
     # "photo/design abhi nahi hai" while we asked for the design — fine either way.
-    no_problem_design: str = "Koi baat nahi 👍 Jab ho sake bhej dijiyega — warna hamare catalogue se design select kar sakte hain."
+    no_problem_design: str = "Koi baat nahi 👍 Hum ready designs bhi dikha sakte hain — hamare catalogue se select kar lijiye, main screenshots bhejwa deti hoon."
     # A photo/file arriving after the quote or a soft close.
     media_received: str = "Mil gaya 👍 Team ko forward kar diya hai, wo isi ke hisaab se aage kaam karegi."
     ask_item: str = "Bahut badhiya 👍 Pehle ye bata dijiye — print lagana kis cheez par hai?"
@@ -214,7 +214,7 @@ class SalesFlowConfig(BaseModel):
 
     # Sent once, a few hours after a customer goes quiet mid-funnel (lead_followup).
     # Plain text, no buttons — the funnel never shows any, and this is still that chat.
-    followup_with_service: str = "Hi {name} 🙏 Aap {service} ke liye enquiry kar rahe the. Agar abhi bhi chahiye ho to bas apna design/requirement bata dijiye, main turant aage badha deti hoon."
+    followup_with_service: str = "Hi {name} 🙏 Aap {service} ke liye enquiry kar rahe the. Agar aap abhi bhi banwana chahte hain to apna design ya requirement share kar dijiye — hum aapko size aur pricing samajhne mein help kar denge."
     followup_no_service: str = "Hi {name} 🙏 Kuch poochna tha kya? Bata dijiye, main yahin hoon."
 
 

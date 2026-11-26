@@ -98,7 +98,10 @@ VARIANTS: dict[str, tuple[str, list[tuple[str, set[str]]]]] = {
     # sabse achha hota hai. Aapko kispe paste karna hai?" with curved items (tumbler) and
     # cloth as the two things to tell apart. Box, diary, glass and the like are all plain
     # hard surfaces as far as printing goes, so their words live in that bucket.
-    "uvdtf": ("UV DTF aajkal bahut trending mein hai \U0001f44d Ye plain ya hard surface par sabse achha hota hai.\n\nAapko kispe paste karna hai?", [
+    "uvdtf": (
+        "UV DTF aajkal bahut trending mein hai \U0001f44d Finish kaafi premium hota hai, aur bottles, glasses, "
+        "jars, packaging, gifts jaisi bahut saari smooth surfaces par professional look deta hai.\n\n"
+        "Aapko kispe paste karna hai?", [
         ("plain / hard surface (glass, steel, acrylic, box, diary)",
          {"glass", "kaanch", "kanch", "ceramic", "cup", "cups", "steel", "metal", "acrylic",
           "aluminium", "mirror", "tile", "plate", "trophy", "laptop", "helmet", "mobile",
@@ -631,7 +634,12 @@ _ACK: dict[str, tuple[str, ...]] = {
     "design_team": ("Koi baat nahi 👍 Hamare catalogue se design select kar lijiye — main screenshots bhejwa deti hoon.",
                     "Theek hai 👍 Catalogue se design chun lijiye, screenshots main bhejwa deti hoon.",
                     "Koi dikkat nahi 👍 Hamare catalogue ke designs ke screenshots bhejwa deti hoon, wahan se select kar lijiye."),
-    "design_customer": ("Badhiya! Jab ho sake yahin bhej dijiyega 👍", "Achha hai, design ready hai to kaam fast hoga — yahin bhej dijiye.", "Perfect, bas yahin bhej dijiyega jab free ho 👍"),
+    # The script: "Perfect! Aap apna logo/design yahan share kar dijiye, hum aapke design
+    # ke according stickers prepare kar denge." The next question is the size itself, so
+    # the ack does not also promise to ask it.
+    "design_customer": ("Perfect! Jab ho sake yahin bhej dijiyega 👍 Aapke design ke according hi prepare karenge.",
+                        "Badhiya, design ready hai to kaam fast ho jayega — yahin bhej dijiye.",
+                        "Perfect, bas yahin bhej dijiyega jab free ho 👍 Aapke design ke hisaab se hi stickers prepare karenge."),
     "size": ("{v} — note kar liya.", "Theek hai, {v}.", "{v}, likh liya."),
     "qty": ("{v} — samajh gayi.", "{v}, theek hai.", "Achha, {v}."),
     # It is a full delivery address now, not a city — "Shop 12, MI Road se hain" read
